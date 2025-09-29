@@ -19,7 +19,6 @@
   'use strict';
 
   const STORAGE_KEY = 'vm_sites_palette__sites';
-  const COMMANDS_KEY = 'vm_sites_palette__commands_v1';
   const SETTINGS_KEY = 'vm_sites_palette__settings_v2';
   const FAVCACHE_KEY = 'vm_sites_palette__favcache_v1';
   const USAGE_KEY = 'vm_sites_palette__usage_v1';
@@ -28,16 +27,9 @@
     { id: 'site-github', type: 'site', name: 'GitHub', url: 'https://github.com/', tags: ['開発'] },
     { id: 'site-stackoverflow', type: 'site', name: 'Stack Overflow', url: 'https://stackoverflow.com/', tags: ['開発'] },
     { id: 'site-mdn', type: 'site', name: 'MDN Web Docs', url: 'https://developer.mozilla.org/', tags: ['開発'] },
+    { id: 'site-bing', type: 'site', name: 'Bing検索', url: 'https://www.bing.com/search?q=%s', tags: ['検索'] },
     { id: 'site-youtube', type: 'site', name: 'YouTube', url: 'https://www.youtube.com/', tags: ['動画'] },
     { id: 'site-gcal', type: 'site', name: 'Google Calendar', url: 'https://calendar.google.com/', tags: ['仕事'] }
-  ];
-
-  const defaultCommands = [
-    { id: 'cmd-add-current', type: 'command', name: 'このページを追加', commandId: 'add-current', tags: ['管理'] },
-    { id: 'cmd-close-tab', type: 'command', name: 'タブを閉じる', commandId: 'close-tab', tags: ['ブラウザ'] },
-    { id: 'cmd-reload', type: 'command', name: 'リロード', commandId: 'reload', tags: ['ブラウザ'] },
-    { id: 'cmd-copy-url', type: 'command', name: 'URLをコピー', commandId: 'copy-url', tags: ['ブラウザ'] },
-    { id: 'cmd-go-top', type: 'command', name: '先頭にスクロール', commandId: 'go-top', tags: ['ブラウザ'] }
   ];
 
   const defaultSettings = {
@@ -121,25 +113,6 @@
     return [];
   }
 
-  const builtInCommandDefs = {
-    'add-current': { description: '現在のページをサイトに追加', run: runAddCurrent },
-    'close-tab': { description: 'アクティブタブを閉じる', run: () => window.close() },
-    'reload': { description: '現在のタブをリロード', run: () => location.reload() },
-    'copy-url': { description: '現在ページのURLをコピー', run: copyUrl },
-    'go-top': { description: 'ページ先頭へスクロール', run: shift => window.scrollTo({ top: 0, behavior: shift ? 'auto' : 'smooth' }) }
-  };
-
-  function getBuiltinDefaultLabel(id) {
-    switch (id) {
-      case 'add-current': return 'このページを追加';
-      case 'close-tab': return 'タブを閉じる';
-      case 'reload': return 'リロード';
-      case 'copy-url': return 'URLをコピー';
-      case 'go-top': return '先頭にスクロール';
-      default: return id;
-    }
-  }
-
   const incrementUsage = id => {
     if (!id) return;
     const next = (usageCache[id] || 0) + 1;
@@ -183,39 +156,6 @@
     GM_setValue(STORAGE_KEY, list);
   }
 
-  function normalizeCommand(entry) {
-    if (!entry || typeof entry !== 'object') return null;
-    const next = { ...entry };
-    next.type = 'command';
-    if (!next.id) next.id = generateId('cmd');
-    next.commandId = (next.commandId || '').trim();
-    if (!next.commandId) return null;
-    next.name = next.name || getBuiltinDefaultLabel(next.commandId) || next.commandId;
-    next.tags = normalizeTags(next.tags) || [];
-    next.description = next.description || builtInCommandDefs[next.commandId]?.description || '';
-    return next;
-  }
-
-  function getCustomCommands() {
-    const raw = GM_getValue(COMMANDS_KEY, defaultCommands);
-    const normalized = [];
-    let mutated = false;
-    for (const cmd of raw) {
-      const norm = normalizeCommand(cmd);
-      if (!norm) continue;
-      if (norm !== cmd) mutated = true;
-      normalized.push(norm);
-    }
-    if (!normalized.length) normalized.push(...defaultCommands.map(normalizeCommand).filter(Boolean));
-    if (mutated) setCommands(normalized, true);
-    return normalized;
-  }
-
-  function setCommands(commands, skipNormalize) {
-    const list = skipNormalize ? commands : commands.map(normalizeCommand).filter(Boolean);
-    GM_setValue(COMMANDS_KEY, list);
-  }
-
   function pruneUsage(validIds) {
     const next = {};
     let changed = false;
@@ -231,8 +171,7 @@
 
   function getEntries() {
     const sites = getSites();
-    const commands = getCustomCommands();
-    return [...sites, ...commands];
+    return [...sites];
   }
 
   /* ---------- Root ---------- */
@@ -250,7 +189,6 @@
   const DEFAULT_PLACEHOLDER = 'サイト名やURLで検索… Enterで開く / Shift+Enterで新規タブ';
   let overlayEl, inputEl, listEl, hintEl, toastEl, hintLeftSpan;
   let isOpen = false, currentItems = [], activeIndex = 0;
-  let searchState = { mode: 'default', baseEntry: null, shift: false };
   let cachedSettings = null;
 
   function ensurePalette() {
@@ -374,22 +312,32 @@
     overlayEl.style.display = 'block';
     inputEl.value = '';
     inputEl.placeholder = DEFAULT_PLACEHOLDER;
-    searchState = { mode: 'default', baseEntry: null, shift: false };
     activeIndex = 0;
     renderList();
     cachedSettings = getSettings();
     setTimeout(() => inputEl.focus(), 0);
   }
-  function hidePalette() { isOpen = false; if (overlayEl) overlayEl.style.display = 'none'; exitCommandArgument(); }
+  function hidePalette() { isOpen = false; if (overlayEl) overlayEl.style.display = 'none'; }
 
   function onInputKey(e) {
-    if (searchState.mode === 'command-arg') {
-      if (e.key === 'Escape') { exitCommandArgument(); return; }
-      if (e.key === 'Enter') { e.preventDefault(); runCommandArgument(); }
+    if (e.key === 'Enter' && e.metaKey) {
+      e.preventDefault();
+      runBingSearchFromInput();
       return;
     }
     if (e.key === 'Escape') { hidePalette(); return; }
-    if (!currentItems.length) return;
+    if (!currentItems.length) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const q = (inputEl.value || '').trim();
+        if (!q) {
+          showToast('検索キーワードを入力してください');
+          return;
+        }
+        openUrlWithPreference(`https://www.bing.com/search?q=${encodeURIComponent(q)}`);
+      }
+      return;
+    }
     if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = (activeIndex + 1) % currentItems.length; updateActive(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = (activeIndex - 1 + currentItems.length) % currentItems.length; updateActive(); }
     else if (e.key === 'Enter') { e.preventDefault(); const item = currentItems[activeIndex]; openItem(item, e.shiftKey); }
@@ -431,9 +379,7 @@
     const filtered = base.filter(item => item.score > -Infinity);
     filtered.sort((a,b) => b.score - a.score);
 
-    const sites = filtered.filter(item => item.entry.type !== 'command').map(item => item.entry);
-    const commands = filtered.filter(item => item.entry.type === 'command').map(item => item.entry);
-    return { sites, commands };
+    return filtered.map(item => item.entry);
   }
 
   function createFuzzyMatcher(query) {
@@ -456,22 +402,6 @@
   }
 
   function escapeRegex(str) { return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
-
-  function createCommandIcon(entry) {
-    const wrap = document.createElement('div');
-    wrap.style.width = '20px';
-    wrap.style.height = '20px';
-    wrap.style.display = 'flex';
-    wrap.style.alignItems = 'center';
-    wrap.style.justifyContent = 'center';
-    wrap.style.borderRadius = '6px';
-    wrap.style.background = 'var(--command-badge-bg)';
-    wrap.style.color = 'var(--panel-text)';
-    wrap.style.fontSize = '12px';
-    wrap.style.fontWeight = '600';
-    wrap.textContent = '⌘';
-    return wrap;
-  }
 
   function ensureToast() {
     if (toastEl) return;
@@ -501,124 +431,71 @@
     Object.entries(vars).forEach(([key, value]) => { docStyle.setProperty(key, value); });
   }
 
-  function exitCommandArgument() {
-    if (searchState.mode !== 'command-arg') return;
-    searchState = { mode: 'default', baseEntry: null, shift: false };
-    inputEl.value = '';
-    inputEl.placeholder = DEFAULT_PLACEHOLDER;
-    hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Esc: 閉じる';
-    inputEl.removeAttribute('data-arg');
-    renderList();
-  }
-
-  function renderCommandArgument() {
-    listEl.innerHTML = '';
-    const item = document.createElement('div');
-    item.className = 'empty';
-    item.textContent = 'クエリを入力して Enter で実行 / Esc でキャンセル';
-    listEl.appendChild(item);
-  }
-
-  function runCommandArgument() {
-    if (searchState.mode !== 'command-arg' || !searchState.baseEntry) return;
-    const query = inputEl.value.trim();
-    executeEntry(searchState.baseEntry, searchState.shift, query);
-  }
-
   function renderList() {
-    if (searchState.mode === 'command-arg') {
-      renderCommandArgument();
-      return;
-    }
-
     const rawQuery = inputEl.value || '';
     const { tagFilter, textQuery } = extractTagFilter(rawQuery);
     const q = normalize(textQuery);
     const entries = getEntries();
     const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => normalize(t) === tagFilter)) : entries;
-    const { sites, commands } = scoreEntries(filtered, q);
-    const combined = [...sites, ...commands];
-    if (combined.length) {
-      if (activeIndex >= combined.length) activeIndex = combined.length - 1;
+    const scored = scoreEntries(filtered, q);
+    if (scored.length) {
+      if (activeIndex >= scored.length) activeIndex = scored.length - 1;
       if (activeIndex < 0) activeIndex = 0;
     } else {
       activeIndex = 0;
     }
 
     listEl.innerHTML = '';
-    if (!combined.length) {
+    if (!scored.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = q || tagFilter ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
       listEl.appendChild(empty); return;
     }
-    const addGroupTitle = (label) => {
-      const div = document.createElement('div');
-      div.className = 'group-title';
-      div.textContent = label;
-      listEl.appendChild(div);
-    };
 
-    let indexOffset = 0;
-    const renderGroup = (items, label) => {
-      if (!items.length) return;
-      addGroupTitle(label);
-      items.forEach((entry, idx) => {
-        const globalIndex = indexOffset + idx;
-        const item = document.createElement('div');
-        item.className = 'item' + (globalIndex === activeIndex ? ' active' : '');
-        item.tabIndex = 0;
-        item.addEventListener('mouseenter', () => { activeIndex = globalIndex; updateActive(); });
-        item.addEventListener('click', () => openItem(entry, false));
+    scored.forEach((entry, idx) => {
+      const item = document.createElement('div');
+      item.className = 'item';
+      item.dataset.index = idx;
+      item.addEventListener('mouseenter', () => { activeIndex = idx; updateActive(); });
+      item.addEventListener('mousedown', e => e.preventDefault());
+      item.addEventListener('click', () => { openItem(entry, false); });
 
-      const icon = entry.type === 'command' ? createCommandIcon(entry) : createFaviconEl(entry);
-        const left = document.createElement('div');
-        const name = document.createElement('div');
-        name.className = 'name';
-        name.textContent = entry.name || (entry.type === 'command' ? getBuiltinDefaultLabel(entry.commandId) : '(no title)');
-        if (entry.type === 'command') {
-          const badge = document.createElement('span');
-          badge.className = 'command-badge';
-          badge.textContent = 'COMMAND';
-          name.appendChild(badge);
-        }
-        left.appendChild(name);
+      const icon = createFaviconEl(entry);
 
-        if (entry.url) {
-          const url = document.createElement('div');
-          url.className = 'url';
-          url.textContent = entry.url;
-          left.appendChild(url);
-        } else if (entry.description) {
-          const desc = document.createElement('div');
-          desc.className = 'url';
-          desc.textContent = entry.description;
-          left.appendChild(desc);
-        }
+      const left = document.createElement('div');
+      left.className = 'left';
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = entry.name || '(no title)';
+      left.appendChild(name);
 
-        if (entry.tags && entry.tags.length) {
-          const tags = document.createElement('div');
-          tags.className = 'tag-badges';
-          entry.tags.forEach(tag => {
-            const span = document.createElement('span');
-            span.className = 'tag';
-            span.textContent = tag;
-            tags.appendChild(span);
-          });
-          left.appendChild(tags);
-        }
+      if (entry.url) {
+        const url = document.createElement('div');
+        url.className = 'url';
+        url.textContent = entry.url;
+        left.appendChild(url);
+      }
 
-        const right = document.createElement('div'); right.innerHTML = '<span class="kbd">↵</span>';
+      if (entry.tags && entry.tags.length) {
+        const tags = document.createElement('div');
+        tags.className = 'tag-badges';
+        entry.tags.forEach(tag => {
+          const span = document.createElement('span');
+          span.className = 'tag';
+          span.textContent = tag;
+          tags.appendChild(span);
+        });
+        left.appendChild(tags);
+      }
 
-        item.appendChild(icon); item.appendChild(left); item.appendChild(right);
-        listEl.appendChild(item);
-      });
-      indexOffset += items.length;
-    };
+      const right = document.createElement('div'); right.innerHTML = '<span class="kbd">↵</span>';
 
-    renderGroup(sites, 'サイト');
-    renderGroup(commands, 'コマンド');
-    currentItems = combined;
+      item.appendChild(icon); item.appendChild(left); item.appendChild(right);
+      listEl.appendChild(item);
+    });
+
+    currentItems = scored;
     updateActive();
   }
   function updateActive() {
@@ -632,51 +509,25 @@
   }
 
   function executeEntry(entry, shiftPressed, query) {
-     const settings = getSettings();
-     if (entry.type === 'command') {
-      runCommand(entry, shiftPressed, query);
-      return;
-    }
- 
-     const preferNew = settings.enterOpens === 'newtab';
-     const openNew = shiftPressed ? !preferNew : preferNew;
- 
-     let targetUrl = entry.url;
-     if (entry.url && entry.url.includes('%s')) {
-       if (query === undefined) {
-         // ask for query
-        searchState = { mode: 'command-arg', baseEntry: entry, shift: shiftPressed };
+    const settings = getSettings();
+    const openNew = shouldOpenInNewTab(shiftPressed);
+
+    let targetUrl = entry.url;
+    if (entry.url && entry.url.includes('%s')) {
+      const q = query !== undefined ? query : inputEl.value.trim();
+      if (!q) {
         inputEl.value = '';
         inputEl.placeholder = `${entry.name} に検索キーワードを入力…`;
-        hintLeftSpan.textContent = 'Enter: 実行 / Esc: キャンセル';
+        showToast('検索キーワードを入力してください');
         inputEl.focus();
-        renderCommandArgument();
         return;
-       }
-       targetUrl = entry.url.replace(/%s/g, encodeURIComponent(query));
-     }
- 
-     hidePalette();
-     incrementUsage(entry.id);
-     if (openNew) {
-       try { GM_openInTab(targetUrl, { active: true, insert: true }); }
-       catch { window.open(targetUrl, '_blank'); }
-     } else {
-       try { location.assign(targetUrl); }
-       catch { location.href = targetUrl; }
-     }
-     exitCommandArgument();
-   }
-
-  function runCommand(entry, shiftPressed, query) {
-    incrementUsage(entry.id);
-    const handler = builtInCommandDefs[entry.commandId]?.run;
-    if (handler) {
-      handler(shiftPressed, entry, query);
-    } else {
-      showToast('未対応のコマンドです');
+      }
+      targetUrl = entry.url.replace(/%s/g, encodeURIComponent(q));
     }
+
     hidePalette();
+    incrementUsage(entry.id);
+    openUrlWithPreference(targetUrl, openNew ? 'newtab' : 'same');
   }
 
   function runAddCurrent() {
@@ -697,6 +548,38 @@
     } catch {
       navigator.clipboard?.writeText(location.href);
       showToast('URLをコピーしました');
+    }
+  }
+
+  function runBingSearch(shiftPressed, entry, query) {
+    const keywords = (query || '').trim();
+    if (!keywords) {
+      showToast('検索キーワードを入力してください');
+      return;
+    }
+    const mode = shiftPressed ? 'newtab' : 'auto';
+    openUrlWithPreference(`https://www.bing.com/search?q=${encodeURIComponent(keywords)}`, mode);
+  }
+
+  function runBingSearchFromInput() {
+    const q = (inputEl.value || '').trim();
+    if (!q) {
+      showToast('検索キーワードを入力してください');
+      return;
+    }
+    openUrlWithPreference(`https://www.bing.com/search?q=${encodeURIComponent(q)}`);
+  }
+
+  function openUrlWithPreference(url, mode = 'auto') {
+    hidePalette();
+    const settings = getSettings();
+    const openNew = mode === 'newtab' ? true : mode === 'same' ? false : mode === 'command' ? true : settings.enterOpens === 'newtab';
+    if (openNew) {
+      try { GM_openInTab(url, { active: true, insert: true }); }
+      catch { window.open(url, '_blank'); }
+    } else {
+      try { location.assign(url); }
+      catch { location.href = url; }
     }
   }
 
@@ -813,7 +696,7 @@
   }
 
   /* ---------- Manager ---------- */
-  let mgrOverlay, mgrBox, siteBodyEl, commandBodyEl, commandOptionsHtml;
+  let mgrOverlay, mgrBox, siteBodyEl;
   function buildManager() {
     mgrOverlay = document.createElement('div');
     mgrOverlay.className = 'mgr-overlay';
@@ -833,28 +716,13 @@
       </header>
       <input type="file" id="vm-import-file" accept="application/json" style="display:none">
       <div style="padding:10px 14px">
-        <div class="mgr-tabs">
-          <button class="btn tab-btn active" data-tab="sites">サイト</button>
-          <button class="btn tab-btn" data-tab="commands">コマンド</button>
-        </div>
-        <div class="mgr-tab" data-tab="sites">
-          <table class="tbl">
-            <thead>
-              <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
-            </thead>
-            <tbody id="vm-rows-sites"></tbody>
-          </table>
-          <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
-        </div>
-        <div class="mgr-tab hidden" data-tab="commands">
-          <table class="tbl">
-            <thead>
-              <tr><th style="width:36px"></th><th>名前</th><th>コマンドID</th><th>説明</th><th>タグ</th><th style="width:220px">操作</th></tr>
-            </thead>
-            <tbody id="vm-rows-commands"></tbody>
-          </table>
-          <div style="padding:12px 0"><button class="btn" id="vm-add-command">行を追加</button></div>
-        </div>
+        <table class="tbl">
+          <thead>
+            <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
+          </thead>
+          <tbody id="vm-rows-sites"></tbody>
+        </table>
+        <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
       </div>
       <footer>
         <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
@@ -865,12 +733,8 @@
     root.appendChild(mgrOverlay);
 
     siteBodyEl = mgrBox.querySelector('#vm-rows-sites');
-    commandBodyEl = mgrBox.querySelector('#vm-rows-commands');
-    commandOptionsHtml = Object.keys(builtInCommandDefs).map(id => `<option value="${id}">${escapeHtml(getBuiltinDefaultLabel(id))}</option>`).join('');
 
     mgrBox.querySelector('#vm-add-site').addEventListener('click', () => addSiteRow({ name:'', url:'', tags:[] }));
-    mgrBox.querySelector('#vm-add-command').addEventListener('click', () => addCommandRow({ name:'', commandId:'', description:'', tags:[] }));
-    mgrBox.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', onMgrTabClick));
     mgrBox.querySelector('#vm-save').addEventListener('click', saveManager);
     mgrBox.querySelector('#vm-close').addEventListener('click', closeManager);
     mgrBox.querySelector('#vm-export').addEventListener('click', exportSites);
@@ -960,9 +824,7 @@
   function closeManager() { mgrOverlay.style.display = 'none'; }
   function renderManager() {
     siteBodyEl.innerHTML = '';
-    commandBodyEl.innerHTML = '';
     getSites().forEach(s => addSiteRow({ ...s }));
-    getCustomCommands().forEach(c => addCommandRow({ ...c }));
   }
 
   function addSiteRow(data) {
@@ -992,34 +854,6 @@
     siteBodyEl.appendChild(tr);
   }
 
-  function addCommandRow(data) {
-    const tr = document.createElement('tr');
-    if (data.id) tr.dataset.entryId = data.id;
-    tr.innerHTML = `
-      <td class="drag">⋮⋮</td>
-      <td><input type="text" data-field="name" placeholder="表示名" value="${escapeHtml(data.name || '')}"/></td>
-      <td>
-        <select data-field="command" class="command-select">
-          <option value="">選択してください</option>
-          ${commandOptionsHtml}
-        </select>
-      </td>
-      <td><input type="text" data-field="desc" placeholder="説明" value="${escapeHtml(data.description || '')}"/></td>
-      <td><input type="text" data-field="tags" placeholder="カンマ区切り" value="${escapeHtml((data.tags || []).join(', '))}"/></td>
-      <td class="row-btns">
-        <button class="btn" data-up>↑</button>
-        <button class="btn" data-down>↓</button>
-        <button class="btn danger" data-del>削除</button>
-      </td>`;
-
-    const select = tr.querySelector('select[data-field="command"]');
-    if (data.commandId) select.value = data.commandId;
-    tr.querySelector('[data-up]').addEventListener('click', ()=> moveRow(tr, -1, commandBodyEl));
-    tr.querySelector('[data-down]').addEventListener('click', ()=> moveRow(tr, +1, commandBodyEl));
-    tr.querySelector('[data-del]').addEventListener('click', ()=> { tr.remove(); });
-
-    commandBodyEl.appendChild(tr);
-  }
   function moveRow(tr, delta, container) {
     const rows = [...container.children];
     const i = rows.indexOf(tr); if (i < 0) return;
@@ -1029,7 +863,6 @@
   }
   function saveManager() {
     const previousSites = getSites();
-    const previousCommands = getCustomCommands();
 
     const sites = [...siteBodyEl.querySelectorAll('tr')].map((tr, index) => {
       const name = tr.querySelector('input[data-field="name"]').value.trim();
@@ -1041,30 +874,10 @@
       return { id, type: 'site', name, url, tags };
     }).filter(Boolean);
 
-    const commands = [...commandBodyEl.querySelectorAll('tr')].map(tr => {
-      const name = tr.querySelector('input[data-field="name"]').value.trim();
-      const commandId = tr.querySelector('select[data-field="command"]').value.trim();
-      const descriptionInput = tr.querySelector('input[data-field="desc"]');
-      const descriptionRaw = descriptionInput.value.trim();
-      const description = descriptionRaw || builtInCommandDefs[commandId]?.description || '';
-      const tags = tr.querySelector('input[data-field="tags"]').value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
-      if (!commandId) return null;
-      const existing = tr.dataset.entryId && previousCommands.find(c => c.id === tr.dataset.entryId);
-      const id = existing ? existing.id : (tr.dataset.entryId || generateId('cmd'));
-      return { id, type: 'command', name: name || getBuiltinDefaultLabel(commandId), commandId, description, tags };
-    }).filter(Boolean);
-
     setSites(sites);
-    setCommands(commands);
-    pruneUsage(new Set([...sites.map(s => s.id), ...commands.map(c => c.id)]));
+    pruneUsage(new Set([...sites.map(s => s.id)]));
     showToast('保存しました');
     renderList();
-  }
-
-  function onMgrTabClick(e) {
-    const tab = e.currentTarget.dataset.tab;
-    mgrBox.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
-    mgrBox.querySelectorAll('.mgr-tab').forEach(box => box.classList.toggle('hidden', box.dataset.tab !== tab));
   }
 
   /* ---------- Settings UI ---------- */
