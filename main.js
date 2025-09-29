@@ -38,7 +38,8 @@
     enterOpens: 'current', // 'current' | 'newtab'
     blocklist: '',        // one host pattern per line, supports * wildcard
     theme: 'dark',
-    accentColor: '#2563eb'
+    accentColor: '#2563eb',
+    autoOpenUrls: []
   };
 
   const themes = {
@@ -197,13 +198,15 @@
     const style = document.createElement('style');
     style.textContent = `
       :host { all: initial; }
-      .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); }
-      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
+      .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
+      .overlay.visible { opacity: 1; }
+      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
+      .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
       .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
       .input::placeholder { color: var(--input-placeholder); }
       .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
       .link { cursor: pointer; color: var(--accent-color); }
-      .list { max-height: min(52vh, 560px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+      .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
       .list::-webkit-scrollbar { width: 0; height: 0; }
       .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
       .item:nth-child(odd) { background: var(--item-bg-alt); }
@@ -310,6 +313,7 @@
     applyTheme();
     isOpen = true;
     overlayEl.style.display = 'block';
+    requestAnimationFrame(() => overlayEl.classList.add('visible'));
     inputEl.value = '';
     inputEl.placeholder = DEFAULT_PLACEHOLDER;
     activeIndex = 0;
@@ -317,9 +321,17 @@
     cachedSettings = getSettings();
     setTimeout(() => inputEl.focus(), 0);
   }
-  function hidePalette() { isOpen = false; if (overlayEl) overlayEl.style.display = 'none'; }
+  function hidePalette() {
+    isOpen = false;
+    if (!overlayEl) return;
+    overlayEl.classList.remove('visible');
+    setTimeout(() => { if (!isOpen) overlayEl.style.display = 'none'; }, 180);
+  }
 
   function onInputKey(e) {
+    if (e.isComposing || e.keyCode === 229) {
+      return;
+    }
     if (e.key === 'Enter' && e.metaKey) {
       e.preventDefault();
       runBingSearchFromInput();
@@ -509,8 +521,10 @@
   }
 
   function executeEntry(entry, shiftPressed, query) {
+    if (!entry) return;
     const settings = getSettings();
-    const openNew = shouldOpenInNewTab(shiftPressed);
+    const preferNew = settings.enterOpens === 'newtab';
+    const openNew = shiftPressed ? !preferNew : preferNew;
 
     let targetUrl = entry.url;
     if (entry.url && entry.url.includes('%s')) {
@@ -934,6 +948,13 @@
           <div class="muted">1行1パターン（* ワイルドカード可）。一致するページではパレットは開かない。</div>
         </div>
       </div>
+      <div class="form-row">
+        <div>自動で開くURL</div>
+        <div>
+          <textarea id="vs-auto-open" rows="4" placeholder="例:\nhttps://example.com/path\nhttps://*.example.org/"></textarea>
+          <div class="muted">1行につき1URL。前方一致（*ワイルドカード可）で一致したページでパレットを自動表示。</div>
+        </div>
+      </div>
       <footer>
         <div class="inline">
           <button class="btn" id="vs-reset">既定値に戻す</button>
@@ -986,6 +1007,8 @@
     accentInput.value = normalizeColor(accent);
     accentText.value = normalizeColor(accent);
     setBox.querySelector('#vs-blocklist').value = s.blocklist || '';
+    const auto = normalizeAutoOpen(s.autoOpenUrls);
+    setBox.querySelector('#vs-auto-open').value = auto.join('\n');
   }
 
   function saveSettingsFromUI() {
@@ -995,7 +1018,8 @@
       enterOpens: setBox.querySelector('input[name="vs-enter"]:checked')?.value || 'current',
       theme: setBox.querySelector('input[name="vs-theme"]:checked')?.value || defaultSettings.theme,
       accentColor: normalizeColor(setBox.querySelector('#vs-accent-text').value || setBox.querySelector('#vs-accent').value || defaultSettings.accentColor),
-      blocklist: setBox.querySelector('#vs-blocklist').value || ''
+      blocklist: setBox.querySelector('#vs-blocklist').value || '',
+      autoOpenUrls: normalizeAutoOpen(setBox.querySelector('#vs-auto-open').value)
     };
     setSettings(s);
     cachedSettings = s;
@@ -1010,6 +1034,27 @@
     if (v.length === 4) v = '#' + v.slice(1).split('').map(ch => ch + ch).join('');
     if (/^#[0-9a-fA-F]{6}$/.test(v)) return v.toLowerCase();
     return defaultSettings.accentColor;
+  }
+
+  function normalizeAutoOpen(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.map(v => (v || '').trim()).filter(Boolean);
+    if (typeof value === 'string') return value.split(/\r?\n/).map(v => v.trim()).filter(Boolean);
+    return [];
+  }
+
+  function shouldAutoOpen() {
+    const { autoOpenUrls = [] } = getSettings();
+    if (!Array.isArray(autoOpenUrls) || !autoOpenUrls.length) return false;
+    const current = location.href;
+    return autoOpenUrls.some(pattern => matchAutoPattern(current, pattern));
+  }
+
+  function matchAutoPattern(url, pattern) {
+    if (!pattern) return false;
+    const parts = pattern.split('*').map(p => p.replace(/[.*+?^${}()|[\]\\]/g, r => '\\' + r));
+    const regex = new RegExp('^' + parts.join('.*') + '');
+    return regex.test(url);
   }
 
   function setupAccentSync() {
@@ -1094,4 +1139,8 @@
   /* ---------- bootstrap ---------- */
   if (!GM_getValue(STORAGE_KEY)) setSites(defaultSites);
   if (!GM_getValue(SETTINGS_KEY)) setSettings(defaultSettings);
+
+  if (shouldAutoOpen()) {
+    setTimeout(() => openPalette(), 120);
+  }
 })();
