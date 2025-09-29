@@ -19,6 +19,7 @@
   'use strict';
 
   const STORAGE_KEY = 'vm_sites_palette__sites';
+  const COMMANDS_KEY = 'vm_sites_palette__commands_v1';
   const SETTINGS_KEY = 'vm_sites_palette__settings_v2';
   const FAVCACHE_KEY = 'vm_sites_palette__favcache_v1';
   const USAGE_KEY = 'vm_sites_palette__usage_v1';
@@ -31,7 +32,7 @@
     { id: 'site-gcal', type: 'site', name: 'Google Calendar', url: 'https://calendar.google.com/', tags: ['仕事'] }
   ];
 
-  const builtInCommands = [
+  const defaultCommands = [
     { id: 'cmd-add-current', type: 'command', name: 'このページを追加', commandId: 'add-current', tags: ['管理'] },
     { id: 'cmd-close-tab', type: 'command', name: 'タブを閉じる', commandId: 'close-tab', tags: ['ブラウザ'] },
     { id: 'cmd-reload', type: 'command', name: 'リロード', commandId: 'reload', tags: ['ブラウザ'] },
@@ -63,6 +64,7 @@
       '--item-active': '#374151',
       '--hint-bg': '#111827',
       '--list-scroll-thumb': '#4b5563',
+      '--list-scroll-track': 'rgba(255,255,255,0.08)',
       '--command-badge-bg': 'rgba(255,255,255,0.12)',
       '--tag-bg': 'rgba(79,70,229,0.2)',
       '--tag-text': '#c7d2fe',
@@ -82,7 +84,8 @@
       '--item-bg-alt': 'rgba(17,24,39,0.03)',
       '--item-active': 'rgba(37,99,235,0.12)',
       '--hint-bg': '#edf2f7',
-      '--list-scroll-thumb': '#cbd5ff',
+      '--list-scroll-thumb': '#94a3ff',
+      '--list-scroll-track': 'rgba(37,99,235,0.08)',
       '--command-badge-bg': 'rgba(37,99,235,0.15)',
       '--tag-bg': 'rgba(37,99,235,0.12)',
       '--tag-text': '#1d4ed8',
@@ -100,9 +103,43 @@
 
   let favCache = GM_getValue(FAVCACHE_KEY, {});
   const setFavCache = (origin, href) => { favCache[origin] = href; GM_setValue(FAVCACHE_KEY, favCache); };
+  const clearFavCacheOrigin = origin => {
+    if (!origin) return;
+    if (favCache[origin]) {
+      delete favCache[origin];
+      GM_setValue(FAVCACHE_KEY, favCache);
+    }
+  };
 
   let usageCache = GM_getValue(USAGE_KEY, {});
   const setUsage = (id, count) => { usageCache[id] = count; GM_setValue(USAGE_KEY, usageCache); };
+
+  function normalizeTags(input) {
+    if (!input) return [];
+    if (Array.isArray(input)) return input.filter(Boolean);
+    if (typeof input === 'string') return input.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+    return [];
+  }
+
+  const builtInCommandDefs = {
+    'add-current': { description: '現在のページをサイトに追加', run: runAddCurrent },
+    'close-tab': { description: 'アクティブタブを閉じる', run: () => window.close() },
+    'reload': { description: '現在のタブをリロード', run: () => location.reload() },
+    'copy-url': { description: '現在ページのURLをコピー', run: copyUrl },
+    'go-top': { description: 'ページ先頭へスクロール', run: shift => window.scrollTo({ top: 0, behavior: shift ? 'auto' : 'smooth' }) }
+  };
+
+  function getBuiltinDefaultLabel(id) {
+    switch (id) {
+      case 'add-current': return 'このページを追加';
+      case 'close-tab': return 'タブを閉じる';
+      case 'reload': return 'リロード';
+      case 'copy-url': return 'URLをコピー';
+      case 'go-top': return '先頭にスクロール';
+      default: return id;
+    }
+  }
+
   const incrementUsage = id => {
     if (!id) return;
     const next = (usageCache[id] || 0) + 1;
@@ -146,6 +183,39 @@
     GM_setValue(STORAGE_KEY, list);
   }
 
+  function normalizeCommand(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const next = { ...entry };
+    next.type = 'command';
+    if (!next.id) next.id = generateId('cmd');
+    next.commandId = (next.commandId || '').trim();
+    if (!next.commandId) return null;
+    next.name = next.name || getBuiltinDefaultLabel(next.commandId) || next.commandId;
+    next.tags = normalizeTags(next.tags) || [];
+    next.description = next.description || builtInCommandDefs[next.commandId]?.description || '';
+    return next;
+  }
+
+  function getCustomCommands() {
+    const raw = GM_getValue(COMMANDS_KEY, defaultCommands);
+    const normalized = [];
+    let mutated = false;
+    for (const cmd of raw) {
+      const norm = normalizeCommand(cmd);
+      if (!norm) continue;
+      if (norm !== cmd) mutated = true;
+      normalized.push(norm);
+    }
+    if (!normalized.length) normalized.push(...defaultCommands.map(normalizeCommand).filter(Boolean));
+    if (mutated) setCommands(normalized, true);
+    return normalized;
+  }
+
+  function setCommands(commands, skipNormalize) {
+    const list = skipNormalize ? commands : commands.map(normalizeCommand).filter(Boolean);
+    GM_setValue(COMMANDS_KEY, list);
+  }
+
   function pruneUsage(validIds) {
     const next = {};
     let changed = false;
@@ -161,7 +231,8 @@
 
   function getEntries() {
     const sites = getSites();
-    return [...sites, ...builtInCommands];
+    const commands = getCustomCommands();
+    return [...sites, ...commands];
   }
 
   /* ---------- Root ---------- */
@@ -194,9 +265,8 @@
       .input::placeholder { color: var(--input-placeholder); }
       .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
       .link { cursor: pointer; color: var(--accent-color); }
-      .list { max-height: min(52vh, 560px); overflow: auto; }
-      .list::-webkit-scrollbar { width: 8px; }
-      .list::-webkit-scrollbar-thumb { background: var(--list-scroll-thumb); border-radius: 4px; }
+      .list { max-height: min(52vh, 560px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+      .list::-webkit-scrollbar { width: 0; height: 0; }
       .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
       .item:nth-child(odd) { background: var(--item-bg-alt); }
       .item.active { background: var(--item-active); transform: translateX(2px); }
@@ -204,18 +274,24 @@
       .item .name .command-badge { margin-left: 0; }
       .item .url { font-size: 12px; color: var(--muted); }
       .item img.ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #fff; border: 1px solid var(--border-color); }
+      .item .ico-letter { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--hint-bg); color: var(--panel-text); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-transform: uppercase; }
       .item .tag-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
       .tag { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--tag-bg); color: var(--tag-text); font-size: 10px; border-radius: 999px; }
       .tag::before { content: '#'; opacity: 0.7; margin-right: 2px; }
       .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
       .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
       .command-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; background: var(--command-badge-bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--panel-text); }
+      .group-title { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
 
       /* Manager / Settings */
       .mgr-overlay, .set-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; }
       .mgr, .set { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: min(860px, 94vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
       .mgr header, .set header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
       .mgr header h3, .set header h3 { margin: 0; font-size: 16px; }
+      .mgr-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+      .tab-btn { flex: none; }
+      .tab-btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12); }
+      .mgr-tab.hidden { display: none; }
       .mgr .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
       .mgr .tbl th, .mgr .tbl td { border-bottom: 1px solid var(--border-color); padding: 8px 10px; vertical-align: top; }
       .mgr .tbl th { text-align: left; color: var(--muted); font-weight: 600; }
@@ -339,21 +415,25 @@
     const base = entries.map(e => ({ entry: e, score: 0 }));
     if (!query) {
       base.forEach(item => { item.score = 0.0001 + getUsageBoost(item.entry); });
-      return base.sort((a,b) => b.score - a.score).map(x => x.entry);
+    } else {
+      const matcher = createFuzzyMatcher(query);
+      base.forEach(item => {
+        const entry = item.entry;
+        const score = Math.max(
+          matcher(entry.name || ''),
+          matcher(entry.url || '') - 4,
+          matcher((entry.tags || []).join(' ')) - 2
+        );
+        item.score = score === -Infinity ? -Infinity : score + getUsageBoost(entry);
+      });
     }
 
-    const matcher = createFuzzyMatcher(query);
-    const scored = base.map(item => {
-      const entry = item.entry;
-      const score = Math.max(
-        matcher(entry.name || ''),
-        matcher(entry.url || '') - 4,
-        matcher((entry.tags || []).join(' ')) - 2
-      );
-      return score === -Infinity ? null : { entry, score: score + getUsageBoost(entry) };
-    }).filter(Boolean);
+    const filtered = base.filter(item => item.score > -Infinity);
+    filtered.sort((a,b) => b.score - a.score);
 
-    return scored.sort((a,b) => b.score - a.score).map(x => x.entry);
+    const sites = filtered.filter(item => item.entry.type !== 'command').map(item => item.entry);
+    const commands = filtered.filter(item => item.entry.type === 'command').map(item => item.entry);
+    return { sites, commands };
   }
 
   function createFuzzyMatcher(query) {
@@ -456,63 +536,97 @@
     const q = normalize(textQuery);
     const entries = getEntries();
     const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => normalize(t) === tagFilter)) : entries;
-    const scored = scoreEntries(filtered, q);
-    currentItems = scored;
+    const { sites, commands } = scoreEntries(filtered, q);
+    const combined = [...sites, ...commands];
+    if (combined.length) {
+      if (activeIndex >= combined.length) activeIndex = combined.length - 1;
+      if (activeIndex < 0) activeIndex = 0;
+    } else {
+      activeIndex = 0;
+    }
 
     listEl.innerHTML = '';
-    if (!currentItems.length) {
+    if (!combined.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = q || tagFilter ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
       listEl.appendChild(empty); return;
     }
+    const addGroupTitle = (label) => {
+      const div = document.createElement('div');
+      div.className = 'group-title';
+      div.textContent = label;
+      listEl.appendChild(div);
+    };
 
-    currentItems.forEach((entry, idx) => {
-      const item = document.createElement('div');
-      item.className = 'item' + (idx === activeIndex ? ' active' : '');
-      item.tabIndex = 0;
-      item.addEventListener('mouseenter', () => { activeIndex = idx; updateActive(); });
-      item.addEventListener('click', () => openItem(entry, false));
+    let indexOffset = 0;
+    const renderGroup = (items, label) => {
+      if (!items.length) return;
+      addGroupTitle(label);
+      items.forEach((entry, idx) => {
+        const globalIndex = indexOffset + idx;
+        const item = document.createElement('div');
+        item.className = 'item' + (globalIndex === activeIndex ? ' active' : '');
+        item.tabIndex = 0;
+        item.addEventListener('mouseenter', () => { activeIndex = globalIndex; updateActive(); });
+        item.addEventListener('click', () => openItem(entry, false));
 
-      const icon = entry.type === 'command' ? createCommandIcon(entry) : createFaviconEl(entry.url);
-      const left = document.createElement('div');
-      const name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = entry.name || '(no title)';
-      if (entry.type === 'command') {
-        const badge = document.createElement('span');
-        badge.className = 'command-badge';
-        badge.textContent = 'COMMAND';
-        name.appendChild(badge);
-      }
-      left.appendChild(name);
+      const icon = entry.type === 'command' ? createCommandIcon(entry) : createFaviconEl(entry);
+        const left = document.createElement('div');
+        const name = document.createElement('div');
+        name.className = 'name';
+        name.textContent = entry.name || (entry.type === 'command' ? getBuiltinDefaultLabel(entry.commandId) : '(no title)');
+        if (entry.type === 'command') {
+          const badge = document.createElement('span');
+          badge.className = 'command-badge';
+          badge.textContent = 'COMMAND';
+          name.appendChild(badge);
+        }
+        left.appendChild(name);
 
-      if (entry.url) {
-        const url = document.createElement('div');
-        url.className = 'url';
-        url.textContent = entry.url;
-        left.appendChild(url);
-      }
+        if (entry.url) {
+          const url = document.createElement('div');
+          url.className = 'url';
+          url.textContent = entry.url;
+          left.appendChild(url);
+        } else if (entry.description) {
+          const desc = document.createElement('div');
+          desc.className = 'url';
+          desc.textContent = entry.description;
+          left.appendChild(desc);
+        }
 
-      if (entry.tags && entry.tags.length) {
-        const tags = document.createElement('div');
-        tags.className = 'tag-badges';
-        entry.tags.forEach(tag => {
-          const span = document.createElement('span');
-          span.className = 'tag';
-          span.textContent = tag;
-          tags.appendChild(span);
-        });
-        left.appendChild(tags);
-      }
+        if (entry.tags && entry.tags.length) {
+          const tags = document.createElement('div');
+          tags.className = 'tag-badges';
+          entry.tags.forEach(tag => {
+            const span = document.createElement('span');
+            span.className = 'tag';
+            span.textContent = tag;
+            tags.appendChild(span);
+          });
+          left.appendChild(tags);
+        }
 
-      const right = document.createElement('div'); right.innerHTML = '<span class="kbd">↵</span>';
+        const right = document.createElement('div'); right.innerHTML = '<span class="kbd">↵</span>';
 
-      item.appendChild(icon); item.appendChild(left); item.appendChild(right);
-      listEl.appendChild(item);
+        item.appendChild(icon); item.appendChild(left); item.appendChild(right);
+        listEl.appendChild(item);
+      });
+      indexOffset += items.length;
+    };
+
+    renderGroup(sites, 'サイト');
+    renderGroup(commands, 'コマンド');
+    currentItems = combined;
+    updateActive();
+  }
+  function updateActive() {
+    const items = listEl.querySelectorAll('.item');
+    items.forEach((el, idx) => {
+      el.classList.toggle('active', idx === activeIndex);
     });
   }
-  function updateActive() { [...listEl.children].forEach((el,i)=> el.classList && el.classList.toggle('active', i===activeIndex)); }
   function openItem(item, shiftPressed) {
     executeEntry(item, shiftPressed);
   }
@@ -520,9 +634,9 @@
   function executeEntry(entry, shiftPressed, query) {
      const settings = getSettings();
      if (entry.type === 'command') {
-       runCommand(entry, shiftPressed, query);
-       return;
-     }
+      runCommand(entry, shiftPressed, query);
+      return;
+    }
  
      const preferNew = settings.enterOpens === 'newtab';
      const openNew = shiftPressed ? !preferNew : preferNew;
@@ -555,64 +669,58 @@
    }
 
   function runCommand(entry, shiftPressed, query) {
-    const id = entry.commandId;
-    if (id === 'add-current') {
-      const title = document.title || location.hostname;
-      const url = location.href;
-      const existing = getSites();
-      const newSite = { id: generateId('site'), type: 'site', name: title, url, tags: entry.tags || [] };
-      setSites([...existing, newSite]);
-      pruneUsage(new Set([...existing.map(s => s.id), newSite.id]));
-      showToast('現在のページを登録しました');
-      renderList();
-      return;
+    incrementUsage(entry.id);
+    const handler = builtInCommandDefs[entry.commandId]?.run;
+    if (handler) {
+      handler(shiftPressed, entry, query);
+    } else {
+      showToast('未対応のコマンドです');
     }
-    if (id === 'close-tab') {
-      hidePalette();
-      window.close();
-      return;
-    }
-    if (id === 'reload') {
-      hidePalette();
-      location.reload();
-      return;
-    }
-    if (id === 'copy-url') {
-      hidePalette();
-      try {
-        GM_setClipboard(location.href);
-        showToast('URLをコピーしました');
-      } catch {
-        navigator.clipboard?.writeText(location.href);
-      }
-      return;
-    }
-    if (id === 'go-top') {
-      hidePalette();
-      window.scrollTo({ top: 0, behavior: shiftPressed ? 'auto' : 'smooth' });
-      return;
+    hidePalette();
+  }
+
+  function runAddCurrent() {
+    const title = document.title || location.hostname;
+    const url = location.href;
+    const existing = getSites();
+    const newSite = { id: generateId('site'), type: 'site', name: title, url, tags: [] };
+    setSites([...existing, newSite]);
+    pruneUsage(new Set([...existing.map(s => s.id), newSite.id]));
+    showToast('現在のページを登録しました');
+    renderList();
+  }
+
+  function copyUrl() {
+    try {
+      GM_setClipboard(location.href);
+      showToast('URLをコピーしました');
+    } catch {
+      navigator.clipboard?.writeText(location.href);
+      showToast('URLをコピーしました');
     }
   }
 
   // favicon helper
-  function createFaviconEl(url) {
+  function createFaviconEl(entry) {
     const wrap = document.createElement('div');
     wrap.style.width = '20px';
     wrap.style.height = '20px';
     wrap.style.display = 'flex';
     wrap.style.alignItems = 'center';
+    wrap.style.justifyContent = 'center';
 
     const img = document.createElement('img');
     img.className = 'ico';
     img.decoding = 'async';
 
     let origin;
+    const url = entry.url;
     try { origin = new URL(url).origin; } catch { origin = null; }
 
     const cached = origin && favCache[origin];
     if (cached) {
       img.onload = () => wrap.appendChild(img);
-      img.onerror = trySimple;
+      img.onerror = () => { clearFavCacheOrigin(origin); trySimple(); };
       img.src = cached;
       return wrap;
     }
@@ -621,7 +729,7 @@
       discoverFavicon(origin, href => {
         if (href) {
           img.onload = () => { setFavCache(origin, href); wrap.appendChild(img); };
-          img.onerror = trySimple;
+          img.onerror = () => { clearFavCacheOrigin(origin); trySimple(); };
           img.src = href;
         } else {
           trySimple();
@@ -634,21 +742,31 @@
     function trySimple() {
       const list = (() => {
         if (!origin) return [];
-        return [
+        const simple = [
           '/favicon.ico',
           '/favicon.svg',
           '/favicon.png',
           '/apple-touch-icon.png',
           '/apple-touch-icon-precomposed.png'
         ].map(p => origin + p);
+        const external = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(origin)}&sz=64`;
+        return [external, ...simple];
       })();
       let i = 0;
       function next() { if (i >= list.length) return fallback(); img.src = list[i++]; }
       img.onload = () => { if (origin) setFavCache(origin, img.src); wrap.appendChild(img); };
-      img.onerror = next; next();
+      img.onerror = () => { if (origin) clearFavCacheOrigin(origin); next(); };
+      next();
     }
 
-    function fallback() { wrap.textContent = '🔗'; }
+    function fallback() {
+      const letter = document.createElement('div');
+      letter.className = 'ico-letter';
+      const text = (entry.name || '').trim();
+      const first = text ? text[0] : (origin ? origin.replace(/^https?:\/\//,'')[0] : '?');
+      letter.textContent = (first || '?').toUpperCase();
+      wrap.appendChild(letter);
+    }
 
     return wrap;
   }
@@ -695,7 +813,7 @@
   }
 
   /* ---------- Manager ---------- */
-  let mgrOverlay, mgrBox, tbodyEl;
+  let mgrOverlay, mgrBox, siteBodyEl, commandBodyEl, commandOptionsHtml;
   function buildManager() {
     mgrOverlay = document.createElement('div');
     mgrOverlay.className = 'mgr-overlay';
@@ -713,13 +831,28 @@
         </div>
       </header>
       <div style="padding:10px 14px">
-        <table class="tbl">
-          <thead>
-            <tr><th style="width:36px"></th><th>名前</th><th>URL / 種別</th><th>タグ</th><th style="width:260px">操作</th></tr>
-          </thead>
-          <tbody id="vm-rows"></tbody>
-        </table>
-        <div style="padding:12px 0"><button class="btn" id="vm-add">行を追加</button></div>
+        <div class="mgr-tabs">
+          <button class="btn tab-btn active" data-tab="sites">サイト</button>
+          <button class="btn tab-btn" data-tab="commands">コマンド</button>
+        </div>
+        <div class="mgr-tab" data-tab="sites">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
+            </thead>
+            <tbody id="vm-rows-sites"></tbody>
+          </table>
+          <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
+        </div>
+        <div class="mgr-tab hidden" data-tab="commands">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:36px"></th><th>名前</th><th>コマンドID</th><th>説明</th><th>タグ</th><th style="width:220px">操作</th></tr>
+            </thead>
+            <tbody id="vm-rows-commands"></tbody>
+          </table>
+          <div style="padding:12px 0"><button class="btn" id="vm-add-command">行を追加</button></div>
+        </div>
       </div>
       <footer>
         <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
@@ -729,8 +862,13 @@
     mgrOverlay.appendChild(mgrBox);
     root.appendChild(mgrOverlay);
 
-    tbodyEl = mgrBox.querySelector('#vm-rows');
-    mgrBox.querySelector('#vm-add').addEventListener('click', () => addRow({ name:'', url:'' }));
+    siteBodyEl = mgrBox.querySelector('#vm-rows-sites');
+    commandBodyEl = mgrBox.querySelector('#vm-rows-commands');
+    commandOptionsHtml = Object.keys(builtInCommandDefs).map(id => `<option value="${id}">${escapeHtml(getBuiltinDefaultLabel(id))}</option>`).join('');
+
+    mgrBox.querySelector('#vm-add-site').addEventListener('click', () => addSiteRow({ name:'', url:'', tags:[] }));
+    mgrBox.querySelector('#vm-add-command').addEventListener('click', () => addCommandRow({ name:'', commandId:'', description:'', tags:[] }));
+    mgrBox.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', onMgrTabClick));
     mgrBox.querySelector('#vm-save').addEventListener('click', saveManager);
     mgrBox.querySelector('#vm-close').addEventListener('click', closeManager);
     mgrBox.addEventListener('keydown', e => {
@@ -757,29 +895,19 @@
   function openManager() { ensurePalette(); renderManager(); mgrOverlay.style.display = 'block'; setTimeout(function(){ var i = mgrBox.querySelector('input'); if (i) i.focus(); }, 0); }
   function closeManager() { mgrOverlay.style.display = 'none'; }
   function renderManager() {
-    tbodyEl.innerHTML = '';
-    getEntries().forEach(entry => {
-      if (entry.type === 'command') return;
-      addRow({ ...entry });
-    });
+    siteBodyEl.innerHTML = '';
+    commandBodyEl.innerHTML = '';
+    getSites().forEach(s => addSiteRow({ ...s }));
+    getCustomCommands().forEach(c => addCommandRow({ ...c }));
   }
-  function addRow(data) {
+
+  function addSiteRow(data) {
     const tr = document.createElement('tr');
     if (data.id) tr.dataset.entryId = data.id;
     tr.innerHTML = `
       <td class="drag">⋮⋮</td>
-      <td>
-        <input type="text" data-field="name" value="${escapeHtml(data.name || '')}"/>
-      </td>
-      <td>
-        <div class="inline">
-          <select data-field="type">
-            <option value="site" ${data.type === 'command' ? '' : 'selected'}>サイト</option>
-            <option value="command" ${data.type === 'command' ? 'selected' : ''}>コマンド</option>
-          </select>
-          <input type="text" data-field="url" placeholder="URL またはコマンドID" value="${escapeHtml(data.type === 'command' ? (data.commandId || '') : (data.url || ''))}"/>
-        </div>
-      </td>
+      <td><input type="text" data-field="name" value="${escapeHtml(data.name || '')}"/></td>
+      <td><input type="text" data-field="url" placeholder="https://example.com/" value="${escapeHtml(data.url || '')}"/></td>
       <td><input type="text" data-field="tags" placeholder="カンマ区切り" value="${escapeHtml((data.tags || []).join(', '))}"/></td>
       <td class="row-btns">
         <button class="btn" data-up>↑</button>
@@ -788,69 +916,91 @@
         <button class="btn danger" data-del>削除</button>
       </td>`;
 
-    const nameI = tr.querySelector('input[data-field="name"]');
-    const typeSel = tr.querySelector('select[data-field="type"]');
     const urlI = tr.querySelector('input[data-field="url"]');
-    const tagsI = tr.querySelector('input[data-field="tags"]');
-    tr.querySelector('[data-up]').addEventListener('click', ()=> moveRow(tr, -1));
-    tr.querySelector('[data-down]').addEventListener('click', ()=> moveRow(tr, +1));
+    tr.querySelector('[data-up]').addEventListener('click', ()=> moveRow(tr, -1, siteBodyEl));
+    tr.querySelector('[data-down]').addEventListener('click', ()=> moveRow(tr, +1, siteBodyEl));
     tr.querySelector('[data-del]').addEventListener('click', ()=> { tr.remove(); });
     tr.querySelector('[data-test]').addEventListener('click', ()=> {
-      if (typeSel.value === 'command') {
-        showToast('この操作ではコマンドは実行できません');
-        return;
-      }
       const u = urlI.value.trim();
-      if (u)
-        window.open(u.includes('%s') ? u.replace(/%s/g, encodeURIComponent('test')) : u, '_blank');
+      if (u) window.open(u.includes('%s') ? u.replace(/%s/g, encodeURIComponent('test')) : u, '_blank');
     });
 
-    typeSel.addEventListener('change', () => {
-      if (typeSel.value === 'command') {
-        urlI.placeholder = 'コマンドID (例: close-tab)';
-      } else {
-        urlI.placeholder = 'https://example.com/';
-      }
-    });
-
-    tbodyEl.appendChild(tr);
+    siteBodyEl.appendChild(tr);
   }
-  function moveRow(tr, delta) {
-    const rows = [...tbodyEl.children];
+
+  function addCommandRow(data) {
+    const tr = document.createElement('tr');
+    if (data.id) tr.dataset.entryId = data.id;
+    tr.innerHTML = `
+      <td class="drag">⋮⋮</td>
+      <td><input type="text" data-field="name" placeholder="表示名" value="${escapeHtml(data.name || '')}"/></td>
+      <td>
+        <select data-field="command" class="command-select">
+          <option value="">選択してください</option>
+          ${commandOptionsHtml}
+        </select>
+      </td>
+      <td><input type="text" data-field="desc" placeholder="説明" value="${escapeHtml(data.description || '')}"/></td>
+      <td><input type="text" data-field="tags" placeholder="カンマ区切り" value="${escapeHtml((data.tags || []).join(', '))}"/></td>
+      <td class="row-btns">
+        <button class="btn" data-up>↑</button>
+        <button class="btn" data-down>↓</button>
+        <button class="btn danger" data-del>削除</button>
+      </td>`;
+
+    const select = tr.querySelector('select[data-field="command"]');
+    if (data.commandId) select.value = data.commandId;
+    tr.querySelector('[data-up]').addEventListener('click', ()=> moveRow(tr, -1, commandBodyEl));
+    tr.querySelector('[data-down]').addEventListener('click', ()=> moveRow(tr, +1, commandBodyEl));
+    tr.querySelector('[data-del]').addEventListener('click', ()=> { tr.remove(); });
+
+    commandBodyEl.appendChild(tr);
+  }
+  function moveRow(tr, delta, container) {
+    const rows = [...container.children];
     const i = rows.indexOf(tr); if (i < 0) return;
     const ni = Math.min(rows.length - 1, Math.max(0, i + delta));
     if (ni === i) return;
-    if (delta < 0) tbodyEl.insertBefore(tr, rows[ni]); else tbodyEl.insertBefore(tr, rows[ni].nextSibling);
+    if (delta < 0) container.insertBefore(tr, rows[ni]); else container.insertBefore(tr, rows[ni].nextSibling);
   }
   function saveManager() {
-    const rows = [...tbodyEl.querySelectorAll('tr')];
     const previousSites = getSites();
-    const siteIds = new Set();
-    const commandIds = new Set(builtInCommands.map(c => c.id));
+    const previousCommands = getCustomCommands();
 
-    const sites = rows.map((r, index) => {
-      const name = r.querySelector('input[data-field="name"]').value.trim();
-      const type = r.querySelector('select[data-field="type"]').value;
-      const urlOrCommand = r.querySelector('input[data-field="url"]').value.trim();
-      const tags = r.querySelector('input[data-field="tags"]').value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
-      if (!name) return null;
-      if (type === 'command') {
-        if (!urlOrCommand) return null;
-        const base = builtInCommands.find(c => c.commandId === urlOrCommand);
-        if (base) commandIds.add(base.id);
-        return null;
-      }
-      if (!urlOrCommand) return null;
-      const existing = rows[index].dataset.entryId && previousSites.find(s => s.id === rows[index].dataset.entryId);
-      const id = existing ? existing.id : (rows[index].dataset.entryId || generateId('site'));
-      siteIds.add(id);
-      return { id, type: 'site', name, url: urlOrCommand, tags };
+    const sites = [...siteBodyEl.querySelectorAll('tr')].map((tr, index) => {
+      const name = tr.querySelector('input[data-field="name"]').value.trim();
+      const url = tr.querySelector('input[data-field="url"]').value.trim();
+      const tags = tr.querySelector('input[data-field="tags"]').value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+      if (!name || !url) return null;
+      const existing = tr.dataset.entryId && previousSites.find(s => s.id === tr.dataset.entryId);
+      const id = existing ? existing.id : (tr.dataset.entryId || generateId('site'));
+      return { id, type: 'site', name, url, tags };
+    }).filter(Boolean);
+
+    const commands = [...commandBodyEl.querySelectorAll('tr')].map(tr => {
+      const name = tr.querySelector('input[data-field="name"]').value.trim();
+      const commandId = tr.querySelector('select[data-field="command"]').value.trim();
+      const descriptionInput = tr.querySelector('input[data-field="desc"]');
+      const descriptionRaw = descriptionInput.value.trim();
+      const description = descriptionRaw || builtInCommandDefs[commandId]?.description || '';
+      const tags = tr.querySelector('input[data-field="tags"]').value.split(/[,\s]+/).map(t => t.trim()).filter(Boolean);
+      if (!commandId) return null;
+      const existing = tr.dataset.entryId && previousCommands.find(c => c.id === tr.dataset.entryId);
+      const id = existing ? existing.id : (tr.dataset.entryId || generateId('cmd'));
+      return { id, type: 'command', name: name || getBuiltinDefaultLabel(commandId), commandId, description, tags };
     }).filter(Boolean);
 
     setSites(sites);
-    pruneUsage(new Set([...siteIds, ...commandIds]));
+    setCommands(commands);
+    pruneUsage(new Set([...sites.map(s => s.id), ...commands.map(c => c.id)]));
     showToast('保存しました');
     renderList();
+  }
+
+  function onMgrTabClick(e) {
+    const tab = e.currentTarget.dataset.tab;
+    mgrBox.querySelectorAll('.tab-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+    mgrBox.querySelectorAll('.mgr-tab').forEach(box => box.classList.toggle('hidden', box.dataset.tab !== tab));
   }
 
   /* ---------- Settings UI ---------- */
