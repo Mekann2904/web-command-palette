@@ -825,11 +825,13 @@
       <header>
         <h3>サイトマネージャ</h3>
         <div>
-          <button class="btn" id="vm-import">インポート/エクスポート</button>
+          <button class="btn" id="vm-export">エクスポート</button>
+          <button class="btn" id="vm-import">インポート</button>
           <button class="btn primary" id="vm-save">保存</button>
           <button class="btn" id="vm-close">閉じる</button>
         </div>
       </header>
+      <input type="file" id="vm-import-file" accept="application/json" style="display:none">
       <div style="padding:10px 14px">
         <div class="mgr-tabs">
           <button class="btn tab-btn active" data-tab="sites">サイト</button>
@@ -871,25 +873,87 @@
     mgrBox.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', onMgrTabClick));
     mgrBox.querySelector('#vm-save').addEventListener('click', saveManager);
     mgrBox.querySelector('#vm-close').addEventListener('click', closeManager);
+    mgrBox.querySelector('#vm-export').addEventListener('click', exportSites);
+    const importInput = mgrBox.querySelector('#vm-import-file');
     mgrBox.addEventListener('keydown', e => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { e.preventDefault(); saveManager(); }
       if (e.key === 'Escape') { e.preventDefault(); closeManager(); }
     });
     mgrBox.querySelector('#vm-import').addEventListener('click', () => {
-      const json = prompt('JSON を貼り付け（エクスポートはOKを押してからコピー）', JSON.stringify(getSites(), null, 2));
-      if (!json) return;
-      try {
-        const arr = JSON.parse(json);
-        if (!Array.isArray(arr)) throw 0;
-        setSites(arr);
-        pruneUsage(new Set(getEntries().map(e => e.id)));
-        renderManager();
-        showToast('読み込みました');
-      }
-      catch {
-        showToast('無効なJSONです');
-      }
+      if (!importInput) return;
+      importInput.value = '';
+      importInput.click();
     });
+    if (importInput) {
+      importInput.addEventListener('change', () => {
+        const file = importInput.files && importInput.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          importSitesFromJson(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.onerror = () => {
+          showToast('ファイルの読み込みに失敗しました');
+        };
+        try {
+          reader.readAsText(file, 'utf-8');
+        } catch (err) {
+          console.error('[CommandPalette] import read error', err);
+          showToast('ファイルの読み込みに失敗しました');
+        }
+      });
+    }
+  }
+
+  function exportSites() {
+    const sites = getSites();
+    const json = JSON.stringify(sites, null, 2);
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    const filename = `sites-backup-${stamp}.json`;
+    if (downloadTextFile(filename, json)) {
+      showToast('エクスポートファイルをダウンロードしました');
+    } else {
+      showToast('エクスポートに失敗しました');
+    }
+  }
+
+  function downloadTextFile(filename, text) {
+    try {
+      const blob = new Blob([text], { type: 'application/json;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      return true;
+    } catch (e) {
+      console.error('[CommandPalette] export failed', e);
+      return false;
+    }
+  }
+
+  function importSitesFromJson(jsonText) {
+    if (!jsonText) {
+      showToast('無効なJSONです');
+      return;
+    }
+    try {
+      const arr = JSON.parse(jsonText);
+      if (!Array.isArray(arr)) throw new Error('not array');
+      setSites(arr);
+      pruneUsage(new Set(getEntries().map(e => e.id)));
+      renderManager();
+      showToast('読み込みました');
+    } catch (err) {
+      console.error('[CommandPalette] import parse error', err);
+      showToast('無効なJSONです');
+    }
   }
 
   function openManager() { ensurePalette(); renderManager(); mgrOverlay.style.display = 'block'; setTimeout(function(){ var i = mgrBox.querySelector('input'); if (i) i.focus(); }, 0); }
