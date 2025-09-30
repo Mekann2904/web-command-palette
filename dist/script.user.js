@@ -1955,6 +1955,374 @@
     };
 
     /**
+     * サイトマネージャのタグ入力フィールド用オートコンプリート機能を管理するクラス
+     */
+    class ManagerAutocomplete {
+        constructor(dom, tagInput, onTagSelect) {
+            /**
+             * 入力イベント処理
+             */
+            this.handleInput = () => {
+                const value = this.tagInput.value;
+                setTimeout(() => {
+                    // カンマ区切りの最後の単語を取得
+                    const tags = value.split(/[,\s]+/).filter(Boolean);
+                    const lastTag = tags[tags.length - 1] || '';
+                    if (lastTag.length > 0) {
+                        this.showTagSuggestions(lastTag);
+                    }
+                    else {
+                        this.hideTagSuggestions();
+                    }
+                }, 10);
+            };
+            /**
+             * キーボードイベント処理
+             */
+            this.handleKeydown = (e) => {
+                if (!this.state.isVisible)
+                    return;
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    this.state.index = (this.state.index + 1) % this.state.items.length;
+                    this.updateActive();
+                }
+                else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    this.state.index = (this.state.index - 1 + this.state.items.length) % this.state.items.length;
+                    this.updateActive();
+                }
+                else if (e.key === 'Enter' && this.state.index >= 0) {
+                    e.preventDefault();
+                    this.selectTag(this.state.items[this.state.index].name);
+                }
+                else if (e.key === 'Escape') {
+                    this.hideTagSuggestions();
+                }
+            };
+            /**
+             * フォーカスイベント処理
+             */
+            this.handleBlur = (e) => {
+                const to = e.relatedTarget;
+                const insideAuto = to && this.autocompleteEl.contains(to);
+                setTimeout(() => {
+                    if (!insideAuto && !this.autocompleteEl.matches(':hover')) {
+                        this.hideTagSuggestions();
+                    }
+                }, 0);
+            };
+            this.dom = dom;
+            this.tagInput = tagInput;
+            this.onTagSelect = onTagSelect;
+            this.state = {
+                items: [],
+                index: -1,
+                isVisible: false
+            };
+            this.buildAutocomplete();
+            this.setupEventListeners();
+        }
+        /**
+         * オートコンプリートUIを構築
+         */
+        buildAutocomplete() {
+            // コンテナを作成して元の入力欄を囲む
+            this.container = document.createElement('div');
+            this.container.className = 'tag-autocomplete-container';
+            this.container.style.position = 'relative';
+            // オートコンプリート要素を作成
+            this.autocompleteEl = document.createElement('div');
+            this.autocompleteEl.className = 'tag-autocomplete-list';
+            this.autocompleteEl.style.display = 'none';
+            // スタイルを追加
+            const style = document.createElement('style');
+            style.textContent = `
+      .tag-autocomplete-container {
+        position: relative;
+        width: 100%;
+      }
+      .tag-autocomplete-list {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--panel-bg);
+        border: 1px solid var(--border-color);
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 2147483647;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        scrollbar-width: none;
+        min-width: 300px;
+        width: max-content;
+        max-width: 500px;
+      }
+      .tag-autocomplete-list::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+      .tag-autocomplete-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        transition: background 0.12s ease, transform 0.12s ease;
+        min-height: 40px;
+        white-space: nowrap;
+      }
+      .tag-autocomplete-item:first-child {
+        border-radius: 8px 8px 0 0;
+      }
+      .tag-autocomplete-item:last-child {
+        border-bottom: none;
+        border-radius: 0 0 8px 8px;
+      }
+      .tag-autocomplete-item:hover,
+      .tag-autocomplete-item.active {
+        background: var(--item-active);
+        transform: translateX(2px);
+      }
+      .tag-autocomplete-tag {
+        flex: 1;
+        color: var(--panel-text);
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .tag-autocomplete-count {
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--hint-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+        flex-shrink: 0;
+        white-space: nowrap;
+      }
+      .tag-autocomplete-new {
+        color: var(--accent-color);
+        font-style: italic;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+      }
+      .tag-autocomplete-debug {
+        font-size: 11px;
+        color: var(--muted);
+        cursor: default;
+        white-space: normal;
+        word-break: break-word;
+      }
+    `;
+            // 元の入力欄をコンテナに移動
+            if (this.tagInput && this.tagInput.parentNode) {
+                this.tagInput.parentNode.replaceChild(this.container, this.tagInput);
+                this.container.appendChild(this.tagInput);
+                this.container.appendChild(this.autocompleteEl);
+                // スタイルをルート要素に追加
+                if (this.dom.root) {
+                    this.dom.root.appendChild(style);
+                }
+            }
+        }
+        /**
+         * イベントリスナーを設定
+         */
+        setupEventListeners() {
+            // 入力イベント
+            this.tagInput.addEventListener('input', this.handleInput);
+            // キーボードイベント
+            this.tagInput.addEventListener('keydown', this.handleKeydown);
+            // フォーカスイベント
+            this.tagInput.addEventListener('blur', this.handleBlur);
+            // オートコンプリート内クリック時にフォーカスを奪われても閉じない
+            this.autocompleteEl.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // 入力の blur を抑止
+                this.tagInput.focus(); // フォーカスを戻す
+            });
+        }
+        /**
+         * タグ候補を表示
+         */
+        showTagSuggestions(query) {
+            const entries = getSites();
+            const allTags = getAllTags(entries);
+            // タグの使用回数をカウント
+            const tagCounts = {};
+            entries.forEach(entry => {
+                if (entry.tags) {
+                    entry.tags.forEach((tag) => {
+                        const normalizedTag = tag.trim();
+                        if (normalizedTag) {
+                            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+                        }
+                    });
+                }
+            });
+            // クエリに基づいてタグをフィルタリング
+            let filteredTags = allTags.filter(tag => {
+                const tagLower = tag.toLowerCase();
+                const queryLower = query.toLowerCase();
+                // 完全一致
+                if (tagLower === queryLower)
+                    return true;
+                // 階層タグの親タグで一致
+                const parts = tag.split('/');
+                if (parts.some(part => part.toLowerCase() === queryLower))
+                    return true;
+                // 部分一致
+                if (tagLower.includes(queryLower))
+                    return true;
+                return false;
+            });
+            // 階層の浅い順、アルファベット順にソート
+            filteredTags.sort((a, b) => {
+                const aDepth = (a.match(/\//g) || []).length;
+                const bDepth = (b.match(/\//g) || []).length;
+                if (aDepth !== bDepth)
+                    return aDepth - bDepth;
+                return a.localeCompare(b);
+            });
+            // タグ候補オブジェクトに変換
+            const filteredTagObjects = filteredTags.map(tag => {
+                let count = tagCounts[tag] || 0;
+                // 親タグの場合、子タグの件数も合算
+                if (!tag.includes('/')) {
+                    Object.keys(tagCounts).forEach(childTag => {
+                        if (childTag.startsWith(tag + '/')) {
+                            count += tagCounts[childTag];
+                        }
+                    });
+                }
+                const parts = tag.split('/');
+                const depth = parts.length - 1;
+                const parentPath = parts.slice(0, -1).join('/');
+                return {
+                    name: tag,
+                    count: count,
+                    depth: depth,
+                    parentPath: parentPath || undefined
+                };
+            });
+            // 新規タグ作成を提案
+            const showNewTagOption = !filteredTagObjects.some(item => item.name.toLowerCase() === query.toLowerCase());
+            if (filteredTagObjects.length === 0 && !showNewTagOption) {
+                this.hideTagSuggestions();
+                return;
+            }
+            this.state.items = filteredTagObjects;
+            if (showNewTagOption) {
+                this.state.items.push({
+                    name: query,
+                    count: 0,
+                    depth: 0,
+                    parentPath: undefined
+                });
+            }
+            this.state.index = 0;
+            this.state.isVisible = true;
+            this.renderTagSuggestions();
+        }
+        /**
+         * タグ候補をレンダリング
+         */
+        renderTagSuggestions() {
+            this.autocompleteEl.innerHTML = '';
+            this.state.items.forEach((tag, index) => {
+                const item = document.createElement('div');
+                item.className = 'tag-autocomplete-item';
+                item.dataset.index = index.toString();
+                const isNewTag = tag.count === 0;
+                if (isNewTag) {
+                    // 新規タグ作成オプション
+                    item.innerHTML = `
+          <div style="display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0;">
+            <span class="tag-autocomplete-tag tag-autocomplete-new" style="overflow: hidden; text-overflow: ellipsis;">➕ 新規タグを作成: "${escapeHtml(tag.name)}"</span>
+            <div style="font-size: 10px; color: var(--muted);">Enterで作成して続行</div>
+          </div>
+        `;
+                }
+                else {
+                    // 既存タグ
+                    const parts = tag.name.split('/');
+                    const displayName = parts.pop() || '';
+                    // 階層関係を視覚的に表現
+                    let hierarchyDisplay = '';
+                    if (tag.depth > 0 && tag.parentPath) {
+                        hierarchyDisplay = `<span style="color: var(--muted); font-size: 11px;">${escapeHtml(tag.parentPath)}/</span>`;
+                    }
+                    item.innerHTML = `
+          <div style="display: flex; align-items: flex-start; gap: 4px; flex: 1; min-width: 0;">
+            <span style="margin-left: ${tag.depth * 12}px; color: var(--muted); font-size: 12px; flex-shrink: 0; margin-top: 2px;">${tag.depth > 0 ? '└─' : ''}</span>
+            <div style="display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0;">
+              <div style="display: flex; align-items: center; gap: 4px; min-width: 0;">
+                ${hierarchyDisplay}
+                <span class="tag-autocomplete-tag" style="font-weight: ${tag.depth > 0 ? '400' : '500'}; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(displayName)}</span>
+              </div>
+              ${tag.depth > 0 ? `<div style="font-size: 10px; color: var(--muted); margin-left: ${tag.depth * 12 + 16}px; overflow: hidden; text-overflow: ellipsis;">フルパス: ${escapeHtml(tag.name)}</div>` : ''}
+            </div>
+          </div>
+          <span class="tag-autocomplete-count">${tag.count}件</span>
+        `;
+                }
+                item.addEventListener('click', () => this.selectTag(tag.name));
+                item.addEventListener('mouseenter', () => {
+                    this.state.index = index;
+                    this.updateActive();
+                });
+                this.autocompleteEl.appendChild(item);
+            });
+            this.autocompleteEl.style.display = 'block';
+            this.updateActive();
+        }
+        /**
+         * タグ候補を非表示
+         */
+        hideTagSuggestions() {
+            this.state.isVisible = false;
+            this.state.index = -1;
+            this.autocompleteEl.style.display = 'none';
+        }
+        /**
+         * アクティブな候補を更新
+         */
+        updateActive() {
+            const items = this.autocompleteEl.querySelectorAll('.tag-autocomplete-item');
+            items.forEach((item, index) => {
+                item.classList.toggle('active', index === this.state.index);
+            });
+        }
+        /**
+         * タグを選択
+         */
+        selectTag(tag) {
+            const currentValue = this.tagInput.value;
+            const tags = currentValue.split(/[,\s]+/).filter(Boolean);
+            // 最後のタグを置換
+            if (tags.length > 0) {
+                tags[tags.length - 1] = tag;
+            }
+            else {
+                tags.push(tag);
+            }
+            // 入力欄を更新
+            this.tagInput.value = tags.join(', ') + ', ';
+            this.hideTagSuggestions();
+            this.tagInput.focus();
+            // コールバックを実行
+            this.onTagSelect(tag);
+        }
+    }
+
+    /**
      * サイトマネージャUIを管理するクラス
      */
     class Manager {
@@ -2137,6 +2505,14 @@
         <button class="btn danger" data-del>削除</button>
       </td>`;
             const urlInput = tr.querySelector('input[data-field="url"]');
+            const tagsInput = tr.querySelector('input[data-field="tags"]');
+            // タグ入力フィールドにオートコンプリートを適用
+            if (tagsInput) {
+                new ManagerAutocomplete(this.dom, tagsInput, (tag) => {
+                    // タグ選択時の処理はManagerAutocompleteクラス内で実装済み
+                    console.log('[CommandPalette] Tag selected:', tag);
+                });
+            }
             tr.querySelector('[data-up]')?.addEventListener('click', () => this.moveRow(tr, -1, this.dom.siteBodyEl));
             tr.querySelector('[data-down]')?.addEventListener('click', () => this.moveRow(tr, 1, this.dom.siteBodyEl));
             tr.querySelector('[data-del]')?.addEventListener('click', () => { tr.remove(); });
@@ -2505,12 +2881,32 @@
             });
             input.addEventListener('keydown', (e) => {
                 e.preventDefault();
-                const mod = e.metaKey ? 'Meta' : e.ctrlKey ? 'Control' : null;
-                if (!mod) {
-                    input.value = 'Meta/Ctrl を含めて押す';
+                // 修飾キー自体がメインキーとして押された場合は無視
+                const isModifierKey = [
+                    'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+                    'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+                ].includes(e.code);
+                if (isModifierKey) {
+                    input.value = '修飾キー以外のキーを押してください';
                     return;
                 }
-                const sig = `${mod}+${e.code}`;
+                // 修飾キーの状態を収集
+                const modifiers = [];
+                if (e.metaKey)
+                    modifiers.push('Meta');
+                if (e.ctrlKey)
+                    modifiers.push('Control');
+                if (e.altKey)
+                    modifiers.push('Alt');
+                if (e.shiftKey)
+                    modifiers.push('Shift');
+                // 少なくとも1つの修飾キーが必要
+                if (modifiers.length === 0) {
+                    input.value = '修飾キー(Ctrl/Alt/Shift/Meta)を含めて押す';
+                    return;
+                }
+                // ホットキー文字列を生成（例: "Meta+Shift+KeyP"）
+                const sig = [...modifiers, e.code].join('+');
                 input.dataset.sig = sig;
                 input.value = this.labelHotkey(sig);
             });
@@ -2521,11 +2917,55 @@
         labelHotkey(sig) {
             if (!sig)
                 return '';
-            const [m, code] = sig.split('+');
-            const keyName = code.replace(/^Key/, '').replace(/^Digit/, '');
+            // ホットキー文字列を解析
+            const parts = sig.split('+');
+            const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
+            const modifiers = parts.slice(0, -1); // 修飾キーの部分
+            // 修飾キーがメインキーとして設定されている場合は無効
+            const isModifierKey = [
+                'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+                'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+            ].includes(mainKey);
+            if (isModifierKey) {
+                return '無効なホットキー';
+            }
+            // メインキーの表示名を整形
+            let keyName = mainKey.replace(/^Key/, '').replace(/^Digit/, '');
+            // 特殊キーの表示名を調整
+            const specialKeys = {
+                'Space': 'Space',
+                'Enter': 'Enter',
+                'Escape': 'Esc',
+                'Tab': 'Tab',
+                'Backspace': 'Backspace',
+                'Delete': 'Delete',
+                'ArrowUp': '↑',
+                'ArrowDown': '↓',
+                'ArrowLeft': '←',
+                'ArrowRight': '→'
+            };
+            if (specialKeys[mainKey]) {
+                keyName = specialKeys[mainKey];
+            }
+            // 修飾キーの表示名を生成
             const isMac = /mac/i.test(navigator.platform);
-            const mod = m === 'Meta' ? (isMac ? '⌘' : 'Win+') : 'Ctrl+';
-            return mod + keyName;
+            const modifierLabels = [];
+            for (const mod of modifiers) {
+                if (mod === 'Meta') {
+                    modifierLabels.push(isMac ? '⌘' : 'Win+');
+                }
+                else if (mod === 'Control') {
+                    modifierLabels.push(isMac ? '⌃' : 'Ctrl+');
+                }
+                else if (mod === 'Alt') {
+                    modifierLabels.push(isMac ? '⌥' : 'Alt+');
+                }
+                else if (mod === 'Shift') {
+                    modifierLabels.push(isMac ? '⇧' : 'Shift+');
+                }
+            }
+            // 修飾キーとメインキーを結合
+            return modifierLabels.join('') + keyName;
         }
     }
 
@@ -2645,11 +3085,31 @@
     const matchHotkey = (e, sig) => {
         if (!sig)
             return false;
-        const [mod, code] = sig.split('+');
-        return ((mod === 'Meta' && e.metaKey) || (mod === 'Control' && e.ctrlKey)) &&
-            e.code === code &&
-            !e.altKey &&
-            !e.shiftKey;
+        // ホットキー文字列を解析（例: "Meta+Shift+KeyP"）
+        const parts = sig.split('+');
+        const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
+        // 修飾キーの部分を取得
+        const modifiers = parts.slice(0, -1);
+        // 修飾キー自体がメインキーとして設定されている場合は無効
+        const isModifierKey = [
+            'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+            'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+        ].includes(mainKey);
+        if (isModifierKey)
+            return false;
+        // メインキーが一致するかチェック
+        if (e.code !== mainKey)
+            return false;
+        // 修飾キーの状態をチェック
+        const hasMeta = modifiers.includes('Meta');
+        const hasControl = modifiers.includes('Control');
+        const hasAlt = modifiers.includes('Alt');
+        const hasShift = modifiers.includes('Shift');
+        // 修飾キーの状態が一致するかチェック
+        return ((hasMeta === e.metaKey) &&
+            (hasControl === e.ctrlKey) &&
+            (hasAlt === e.altKey) &&
+            (hasShift === e.shiftKey));
     };
     /**
      * サイトがブロックリストに含まれるかチェックする

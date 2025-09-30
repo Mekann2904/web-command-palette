@@ -3,6 +3,7 @@ import { DOMElements } from '@/core/state';
 import { getSites, setSites, pruneUsage } from '@/core/storage';
 import { escapeHtml } from '@/utils/string';
 import { showToast } from '@/utils/ui';
+import { ManagerAutocomplete } from './manager-autocomplete';
 
 // GM_* APIのグローバル宣言
 declare const GM_setValue: (key: string, value: any) => void;
@@ -205,6 +206,16 @@ export class Manager {
       </td>`;
 
     const urlInput = tr.querySelector('input[data-field="url"]') as HTMLInputElement;
+    const tagsInput = tr.querySelector('input[data-field="tags"]') as HTMLInputElement;
+    
+    // タグ入力フィールドにオートコンプリートを適用
+    if (tagsInput) {
+      new ManagerAutocomplete(this.dom, tagsInput, (tag: string) => {
+        // タグ選択時の処理はManagerAutocompleteクラス内で実装済み
+        console.log('[CommandPalette] Tag selected:', tag);
+      });
+    }
+    
     tr.querySelector('[data-up]')?.addEventListener('click', ()=> this.moveRow(tr, -1, this.dom.siteBodyEl!));
     tr.querySelector('[data-down]')?.addEventListener('click', ()=> this.moveRow(tr, +1, this.dom.siteBodyEl!));
     tr.querySelector('[data-del]')?.addEventListener('click', ()=> { tr.remove(); });

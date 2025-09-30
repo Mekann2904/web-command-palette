@@ -7,11 +7,38 @@ import { wildcard } from '@/utils';
  */
 export const matchHotkey = (e: KeyboardEvent, sig: string): boolean => {
   if (!sig) return false;
-  const [mod, code] = sig.split('+');
-  return ((mod === 'Meta' && e.metaKey) || (mod === 'Control' && e.ctrlKey)) && 
-         e.code === code && 
-         !e.altKey && 
-         !e.shiftKey;
+  
+  // ホットキー文字列を解析（例: "Meta+Shift+KeyP"）
+  const parts = sig.split('+');
+  const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
+  
+  // 修飾キーの部分を取得
+  const modifiers = parts.slice(0, -1);
+  
+  // 修飾キー自体がメインキーとして設定されている場合は無効
+  const isModifierKey = [
+    'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+  ].includes(mainKey);
+  
+  if (isModifierKey) return false;
+  
+  // メインキーが一致するかチェック
+  if (e.code !== mainKey) return false;
+  
+  // 修飾キーの状態をチェック
+  const hasMeta = modifiers.includes('Meta');
+  const hasControl = modifiers.includes('Control');
+  const hasAlt = modifiers.includes('Alt');
+  const hasShift = modifiers.includes('Shift');
+  
+  // 修飾キーの状態が一致するかチェック
+  return (
+    (hasMeta === e.metaKey) &&
+    (hasControl === e.ctrlKey) &&
+    (hasAlt === e.altKey) &&
+    (hasShift === e.shiftKey)
+  );
 };
 
 /**

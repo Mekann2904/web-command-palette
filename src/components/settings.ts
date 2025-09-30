@@ -270,8 +270,8 @@ export class SettingsUI {
   private setupHotkeyCapture(input: HTMLInputElement | null, field: keyof Settings): void {
     if (!input) return;
     
-    input.addEventListener('focus', () => { 
-      input.value = '任意のキーを押す'; 
+    input.addEventListener('focus', () => {
+      input.value = '任意のキーを押す';
     });
     
     input.addEventListener('blur', () => {
@@ -281,12 +281,33 @@ export class SettingsUI {
     
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       e.preventDefault();
-      const mod = e.metaKey ? 'Meta' : e.ctrlKey ? 'Control' : null;
-      if (!mod) { 
-        input.value = 'Meta/Ctrl を含めて押す'; 
-        return; 
+      
+      // 修飾キー自体がメインキーとして押された場合は無視
+      const isModifierKey = [
+        'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+        'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+      ].includes(e.code);
+      
+      if (isModifierKey) {
+        input.value = '修飾キー以外のキーを押してください';
+        return;
       }
-      const sig = `${mod}+${e.code}`;
+      
+      // 修飾キーの状態を収集
+      const modifiers: string[] = [];
+      if (e.metaKey) modifiers.push('Meta');
+      if (e.ctrlKey) modifiers.push('Control');
+      if (e.altKey) modifiers.push('Alt');
+      if (e.shiftKey) modifiers.push('Shift');
+      
+      // 少なくとも1つの修飾キーが必要
+      if (modifiers.length === 0) {
+        input.value = '修飾キー(Ctrl/Alt/Shift/Meta)を含めて押す';
+        return;
+      }
+      
+      // ホットキー文字列を生成（例: "Meta+Shift+KeyP"）
+      const sig = [...modifiers, e.code].join('+');
       input.dataset.sig = sig;
       input.value = this.labelHotkey(sig);
     });
@@ -297,10 +318,60 @@ export class SettingsUI {
    */
   private labelHotkey(sig: string): string {
     if (!sig) return '';
-    const [m, code] = sig.split('+');
-    const keyName = code.replace(/^Key/, '').replace(/^Digit/, '');
+    
+    // ホットキー文字列を解析
+    const parts = sig.split('+');
+    const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
+    const modifiers = parts.slice(0, -1); // 修飾キーの部分
+    
+    // 修飾キーがメインキーとして設定されている場合は無効
+    const isModifierKey = [
+      'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
+      'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
+    ].includes(mainKey);
+    
+    if (isModifierKey) {
+      return '無効なホットキー';
+    }
+    
+    // メインキーの表示名を整形
+    let keyName = mainKey.replace(/^Key/, '').replace(/^Digit/, '');
+    
+    // 特殊キーの表示名を調整
+    const specialKeys: Record<string, string> = {
+      'Space': 'Space',
+      'Enter': 'Enter',
+      'Escape': 'Esc',
+      'Tab': 'Tab',
+      'Backspace': 'Backspace',
+      'Delete': 'Delete',
+      'ArrowUp': '↑',
+      'ArrowDown': '↓',
+      'ArrowLeft': '←',
+      'ArrowRight': '→'
+    };
+    
+    if (specialKeys[mainKey]) {
+      keyName = specialKeys[mainKey];
+    }
+    
+    // 修飾キーの表示名を生成
     const isMac = /mac/i.test(navigator.platform);
-    const mod = m === 'Meta' ? (isMac ? '⌘' : 'Win+') : 'Ctrl+';
-    return mod + keyName;
+    const modifierLabels: string[] = [];
+    
+    for (const mod of modifiers) {
+      if (mod === 'Meta') {
+        modifierLabels.push(isMac ? '⌘' : 'Win+');
+      } else if (mod === 'Control') {
+        modifierLabels.push(isMac ? '⌃' : 'Ctrl+');
+      } else if (mod === 'Alt') {
+        modifierLabels.push(isMac ? '⌥' : 'Alt+');
+      } else if (mod === 'Shift') {
+        modifierLabels.push(isMac ? '⇧' : 'Shift+');
+      }
+    }
+    
+    // 修飾キーとメインキーを結合
+    return modifierLabels.join('') + keyName;
   }
 }
