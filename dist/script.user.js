@@ -679,44 +679,6 @@
     }
 
     /**
-     * アニメーションユーティリティ関数
-     */
-    /**
-     * CSSトランジションを適用する
-     */
-    function applyTransition(element, properties, duration = 200, easing = 'ease') {
-        return new Promise(resolve => {
-            const originalTransition = element.style.transition;
-            element.style.transition = `all ${duration}ms ${easing}`;
-            const handler = () => {
-                element.removeEventListener('transitionend', handler);
-                element.style.transition = originalTransition;
-                resolve();
-            };
-            element.addEventListener('transitionend', handler, { once: true });
-            requestAnimationFrame(() => {
-                for (const [prop, value] of Object.entries(properties)) {
-                    element.style.setProperty(prop, value);
-                }
-            });
-            // 念のための保険（transitionend が来ないケース）
-            setTimeout(handler, duration + 60);
-        });
-    }
-    /**
-     * スケールインアニメーション
-     */
-    function scaleIn(element, duration = 200) {
-        element.style.transform = 'scale(0.9)';
-        element.style.opacity = '0';
-        element.style.display = '';
-        return applyTransition(element, {
-            transform: 'scale(1)',
-            opacity: '1'
-        }, duration);
-    }
-
-    /**
      * 仮想スクロール用のユーティリティ
      * 大量のアイテムを効率的に表示するための仮想スクロール機能を提供
      */
@@ -899,13 +861,14 @@
      * メインパレットUIを管理するクラス
      */
     class Palette {
-        constructor(state, dom) {
+        constructor(state, dom, onExecuteEntry) {
             this.virtualScrollManager = null;
             this.virtualScrollContainer = null;
             this.virtualScrollContent = null;
             this.VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
             this.state = state;
             this.dom = dom;
+            this.onExecuteEntry = onExecuteEntry;
             // デバウンスされたレンダリング関数を作成
             this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
         }
@@ -1223,7 +1186,7 @@
             if (this.virtualScrollContent) {
                 this.virtualScrollContent.style.height = `${this.virtualScrollManager.getTotalHeight()}px`;
                 this.virtualScrollContent.innerHTML = '';
-                // 表示アイテムをレンダリング
+                // 表示アイテムをシンプルにレンダリング（アニメーションなし）
                 visibleItems.forEach(({ item, index, style }) => {
                     const { entry } = item.data;
                     const itemEl = this.createListItem(entry, index);
@@ -1248,15 +1211,9 @@
                 this.dom.listEl.appendChild(empty);
                 return;
             }
-            // アイテムをアニメーション付きで追加
+            // アイテムをシンプルに追加（アニメーションなし）
             scored.forEach((entry, idx) => {
                 const item = this.createListItem(entry, idx);
-                item.style.opacity = '0';
-                item.style.transform = 'translateY(10px)';
-                // アニメーションを適用
-                setTimeout(() => {
-                    scaleIn(item, 120);
-                }, idx * 30);
                 this.dom.listEl.appendChild(item);
             });
         }
@@ -1557,8 +1514,8 @@
          * アイテムを開く
          */
         openItem(item, shiftPressed) {
-            // この処理はPaletteCoreに委ねる
-            console.log('Opening item:', item, 'shift:', shiftPressed);
+            // コールバックを呼び出してエントリを実行
+            this.onExecuteEntry(item, shiftPressed);
         }
         /**
          * エントリを取得する
@@ -3030,7 +2987,7 @@
             this.dom = createInitialDOMElements();
             this.autocompleteState = createInitialAutocompleteState();
             // コンポーネントの初期化
-            this.palette = new Palette(this.state, this.dom);
+            this.palette = new Palette(this.state, this.dom, (item, shiftPressed) => this.executeEntry(item, shiftPressed));
             this.autocomplete = new Autocomplete(this.dom, this.autocompleteState, () => this.renderList(), () => this.updateActive());
             this.manager = new Manager(this.dom, () => this.renderList());
             this.settings = new SettingsUI(this.dom, () => this.applyTheme());

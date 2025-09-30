@@ -36,7 +36,7 @@ class CommandPaletteApp {
     this.autocompleteState = createInitialAutocompleteState();
 
     // コンポーネントの初期化
-    this.palette = new Palette(this.state, this.dom);
+    this.palette = new Palette(this.state, this.dom, (item, shiftPressed) => this.executeEntry(item, shiftPressed));
     this.autocomplete = new Autocomplete(
       this.dom, 
       this.autocompleteState,

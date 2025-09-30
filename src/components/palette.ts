@@ -16,14 +16,16 @@ export class Palette {
   private state: AppState;
   private dom: DOMElements;
   private debouncedRenderList: () => void;
+  private onExecuteEntry: (item: SiteEntry, shiftPressed: boolean) => void;
   private virtualScrollManager: VirtualScrollManager | null = null;
   private virtualScrollContainer: HTMLElement | null = null;
   private virtualScrollContent: HTMLElement | null = null;
   private readonly VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
 
-  constructor(state: AppState, dom: DOMElements) {
+  constructor(state: AppState, dom: DOMElements, onExecuteEntry: (item: SiteEntry, shiftPressed: boolean) => void) {
     this.state = state;
     this.dom = dom;
+    this.onExecuteEntry = onExecuteEntry;
     
     // デバウンスされたレンダリング関数を作成
     this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
@@ -375,7 +377,7 @@ export class Palette {
       this.virtualScrollContent.style.height = `${this.virtualScrollManager!.getTotalHeight()}px`;
       this.virtualScrollContent.innerHTML = '';
 
-      // 表示アイテムをレンダリング
+      // 表示アイテムをシンプルにレンダリング（アニメーションなし）
       visibleItems.forEach(({ item, index, style }) => {
         const { entry } = item.data;
         const itemEl = this.createListItem(entry, index);
@@ -404,17 +406,9 @@ export class Palette {
       return;
     }
 
-    // アイテムをアニメーション付きで追加
+    // アイテムをシンプルに追加（アニメーションなし）
     scored.forEach((entry, idx) => {
       const item = this.createListItem(entry, idx);
-      item.style.opacity = '0';
-      item.style.transform = 'translateY(10px)';
-      
-      // アニメーションを適用
-      setTimeout(() => {
-        scaleIn(item, 120);
-      }, idx * 30);
-      
       this.dom.listEl!.appendChild(item);
     });
   }
@@ -738,8 +732,8 @@ export class Palette {
    * アイテムを開く
    */
   openItem(item: SiteEntry, shiftPressed: boolean): void {
-    // この処理はPaletteCoreに委ねる
-    console.log('Opening item:', item, 'shift:', shiftPressed);
+    // コールバックを呼び出してエントリを実行
+    this.onExecuteEntry(item, shiftPressed);
   }
 
   /**
