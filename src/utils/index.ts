@@ -4,3 +4,7 @@ export * from './ui';
 export * from './search';
 export * from './debounce';
 export * from './animations';
+export * from './events';
+export * from './dom-helpers';
+export * from './timing';
+export * from './tag-sort';

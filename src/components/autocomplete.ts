@@ -1,6 +1,9 @@
 import { DOMElements, AutocompleteState } from '@/core/state';
 import { getAllTags, shouldShowTagSuggestions } from '@/utils/search';
 import { escapeHtml } from '@/utils/string';
+import { setupAutocompleteEvents, addClickListener, addMouseEnterListener, addMouseDownListener, addInputListener, addKeydownListener } from '@/utils/events';
+import { addInputSpace } from '@/utils/timing';
+import { sortTagsByHierarchy } from '@/utils/tag-sort';
 
 /**
  * オートコンプリートUIを管理するクラス
@@ -107,25 +110,11 @@ export class Autocomplete {
     }
 
     // オートコンプリートのイベントリスナーを追加
-    this.dom.inputEl!.addEventListener('input', this.handleAutocompleteInput);
-    this.dom.inputEl!.addEventListener('keydown', this.handleAutocompleteKeydown);
-    
-    // blur 時、実際に外へ出たときだけ閉じる
-    this.dom.inputEl!.addEventListener('blur', (e) => {
-      const to = e.relatedTarget as Node;
-      const insideAuto = to && this.dom.autocompleteEl!.contains(to);
-      setTimeout(() => {
-        if (!insideAuto && !this.dom.autocompleteEl!.matches(':hover')) {
-          this.hideAutocomplete();
-        }
-      }, 0);
-    });
+    addInputListener(this.dom.inputEl, this.handleAutocompleteInput);
+    addKeydownListener(this.dom.inputEl, this.handleAutocompleteKeydown);
 
-    // オートコンプリート内クリック時にフォーカスを奪われても閉じない
-    this.dom.autocompleteEl!.addEventListener('mousedown', (e) => {
-      e.preventDefault();        // 入力の blur を抑止
-      this.dom.inputEl!.focus();  // フォーカスを戻す
-    });
+    // blur 時、実際に外へ出たときだけ閉じる
+    setupAutocompleteEvents(this.dom.inputEl!, this.dom.autocompleteEl!, () => this.hideAutocomplete());
   }
 
   /**
@@ -139,8 +128,6 @@ export class Autocomplete {
       if (shouldShowTagSuggestions(value)) {
         const hashIndex = value.indexOf('#');
         const afterHash = value.slice(hashIndex + 1);
-        console.log('[CommandPalette] Autocomplete input - value:', value);
-        console.log('[CommandPalette] Autocomplete input - afterHash:', afterHash);
         this.showAutocomplete(afterHash);
       } else {
         this.hideAutocomplete();
@@ -175,9 +162,7 @@ export class Autocomplete {
    */
   showAutocomplete(query: string): void {
     const entries = this.getEntries();
-    console.log('[CommandPalette] Autocomplete - entries from storage:', entries);
     const allTags = getAllTags(entries);
-    console.log('[CommandPalette] Autocomplete - allTags:', allTags);
     
     const tagCounts: Record<string, number> = {};
     entries.forEach(entry => {
@@ -211,24 +196,20 @@ export class Autocomplete {
         const tagLower = tag.toLowerCase();
         const queryLower = query.toLowerCase();
         
-        console.log(`[CommandPalette] Filtering tag "${tag}" against query "${query}"`);
         
         // 完全一致
         if (tagLower === queryLower) {
-          console.log(`[CommandPalette] Exact match: ${tag}`);
           return true;
         }
         
         // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
         const parts = tag.split('/');
         if (parts.some(part => part.toLowerCase() === queryLower)) {
-          console.log(`[CommandPalette] Parent tag match: ${tag}`);
           return true;
         }
         
         // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
         if (tagLower.includes(queryLower)) {
-          console.log(`[CommandPalette] Partial match: ${tag}`);
           return true;
         }
         
@@ -236,12 +217,7 @@ export class Autocomplete {
       });
     }
     
-    filteredTags.sort((a, b) => {
-      const aDepth = (a.match(/\//g) || []).length;
-      const bDepth = (b.match(/\//g) || []).length;
-      if (aDepth !== bDepth) return aDepth - bDepth;
-      return a.localeCompare(b);
-    });
+    filteredTags = sortTagsByHierarchy(filteredTags);
     
     const filteredTagObjects = filteredTags.map(tag => {
       // 階層タグの場合、親タグと子タグの件数を合算
@@ -339,8 +315,8 @@ export class Autocomplete {
         <span class="autocomplete-count">${tag.count}件</span>
       `;
       
-      item.addEventListener('click', () => this.selectAutocompleteItem(tag));
-      item.addEventListener('mouseenter', () => {
+      addClickListener(item, () => this.selectAutocompleteItem(tag));
+      addMouseEnterListener(item, () => {
         this.state.index = index;
         this.updateAutocompleteActive();
       });
@@ -377,7 +353,7 @@ export class Autocomplete {
   /**
    * オートコンプリートアイテム選択
    */
-  private selectAutocompleteItem(tag: any): void {
+  private selectAutocompleteItem(tag: { name: string; count: number }): void {
     const currentValue = this.dom.inputEl!.value;
     const hashIndex = currentValue.indexOf('#');
     

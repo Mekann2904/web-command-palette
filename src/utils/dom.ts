@@ -1,7 +1,13 @@
 import { SiteEntry } from '@/types';
 
 // GM_* APIのグローバル宣言
-declare const GM_xmlhttpRequest: (details: any) => void;
+declare const GM_xmlhttpRequest: (details: {
+  method: string;
+  url: string;
+  headers?: Record<string, string>;
+  onload?: (response: { responseText: string }) => void;
+  onerror?: () => void;
+}) => void;
 
 /**
  * favicon要素を作成する
@@ -139,7 +145,7 @@ export const discoverFavicon = (origin: string, done: (href: string | null) => v
   GM_xmlhttpRequest({
     method: 'GET', 
     url: origin + '/',
-    onload: (res: any) => {
+    onload: (res: { responseText: string }) => {
       try {
         const doc = new DOMParser().parseFromString(res.responseText, 'text/html');
         const links = Array.from(doc.querySelectorAll('link[rel~="icon" i], link[rel="shortcut icon" i], link[rel~="mask-icon" i], link[rel~="apple-touch-icon" i]')) as HTMLLinkElement[];

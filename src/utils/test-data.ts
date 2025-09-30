@@ -121,9 +121,8 @@ export const addSampleData = (): void => {
     if (newItems.length > 0) {
       const updated = [...existing, ...newItems];
       (window as any).GM_setValue?.('vm_sites_palette__sites', updated);
-      console.log(`[CommandPalette] Added ${newItems.length} sample entries`);
     } else {
-      console.log('[CommandPalette] Sample data already exists');
+      // サンプルデータは既に存在
     }
   } catch (error) {
     console.error('[CommandPalette] Failed to add sample data:', error);
@@ -139,7 +138,6 @@ export const clearSampleData = (): void => {
     const sampleIds = new Set(createSampleData().map(item => item.id));
     const filtered = existing.filter((item: any) => !sampleIds.has(item.id));
     (window as any).GM_setValue?.('vm_sites_palette__sites', filtered);
-    console.log('[CommandPalette] Cleared sample data');
   } catch (error) {
     console.error('[CommandPalette] Failed to clear sample data:', error);
   }

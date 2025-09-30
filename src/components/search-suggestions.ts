@@ -1,6 +1,7 @@
 import { SearchHistory, SearchHistoryEntry } from '@/core/history';
 import { DOMElements } from '@/core/state';
 import { escapeHtml } from '@/utils/string';
+import { SiteEntry } from '@/types';
 
 /**
  * 検索候補UIを管理するクラス
@@ -257,7 +258,7 @@ export class SearchSuggestions {
   /**
    * 検索を履歴に追加
    */
-  addToHistory(query: string, selectedEntry?: any): void {
+  addToHistory(query: string, selectedEntry?: SiteEntry): void {
     this.history.addSearch(query, selectedEntry);
   }
 

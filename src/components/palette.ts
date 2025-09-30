@@ -8,6 +8,9 @@ import { escapeHtml, normalize } from '@/utils/string';
 import { debounce } from '@/utils/debounce';
 import { fadeIn, fadeOut, slideInFromTop, scaleIn } from '@/utils/animations';
 import { VirtualScrollManager, VirtualScrollItem, createVirtualScrollContainer } from '@/utils/virtual-scroll';
+import { addClickListener, addMouseEnterListener, addMouseDownListener, addKeydownListener } from '@/utils/events';
+import { setFocusTimeout, addInputSpace } from '@/utils/timing';
+import { sortTagsByHierarchy } from '@/utils/tag-sort';
 
 /**
  * メインパレットUIを管理するクラス
@@ -67,7 +70,7 @@ export class Palette {
     this.state.activeIndex = 0;
     this.renderList();
     
-    setTimeout(() => this.dom.inputEl!.focus(), 0);
+    setFocusTimeout(() => this.dom.inputEl!.focus());
   }
 
   /**
@@ -467,12 +470,7 @@ export class Palette {
       });
     }
 
-    filteredTags.sort((a, b) => {
-      const aDepth = (a.match(/\//g) || []).length;
-      const bDepth = (b.match(/\//g) || []).length;
-      if (aDepth !== bDepth) return aDepth - bDepth;
-      return a.localeCompare(b);
-    });
+    filteredTags = sortTagsByHierarchy(filteredTags);
 
     return filteredTags.slice(0, 5).map((tag, index) => {
       const suggestion = document.createElement('div');
@@ -512,13 +510,13 @@ export class Palette {
       suggestion.appendChild(tagCount);
       suggestion.appendChild(kbd);
       
-      suggestion.addEventListener('mouseenter', () => {
+      addMouseEnterListener(suggestion, () => {
         this.state.activeIndex = index;
         this.updateActive();
       });
       
-      suggestion.addEventListener('mousedown', e => e.preventDefault());
-      suggestion.addEventListener('click', () => {
+      addMouseDownListener(suggestion, e => e.preventDefault());
+      addClickListener(suggestion, () => {
         this.selectTag(tag);
       });
 
@@ -668,14 +666,14 @@ export class Palette {
     item.className = 'item';
     item.dataset.index = index.toString();
     
-    item.addEventListener('mouseenter', () => { 
-      this.state.activeIndex = index; 
-      this.updateActive(); 
+    addMouseEnterListener(item, () => {
+      this.state.activeIndex = index;
+      this.updateActive();
     });
-    
-    item.addEventListener('mousedown', e => e.preventDefault());
-    item.addEventListener('click', () => { 
-      this.openItem(entry, false); 
+
+    addMouseDownListener(item, e => e.preventDefault());
+    addClickListener(item, () => {
+      this.openItem(entry, false);
     });
 
     const icon = createFaviconEl(entry);

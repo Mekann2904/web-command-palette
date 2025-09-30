@@ -1,4 +1,4 @@
-import { SiteEntry } from '@/types';
+import { SiteEntry, Settings } from '@/types';
 import { getAllTags } from '@/utils/search';
 import { showToast } from '@/utils/ui';
 import { matchHotkey } from './hotkey';
@@ -111,7 +111,7 @@ export class KeyboardHandler {
   /**
    * グローバルホットキーハンドラを更新する
    */
-  updateHotkeyHandler = (e: KeyboardEvent, settings: any, onOpenPalette: () => void): void => {
+  updateHotkeyHandler = (e: KeyboardEvent, settings: Settings, onOpenPalette: () => void): void => {
     if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
       e.preventDefault();
       e.stopPropagation();

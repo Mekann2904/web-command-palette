@@ -4,9 +4,10 @@ import { getSites, setSites, pruneUsage } from '@/core/storage';
 import { escapeHtml } from '@/utils/string';
 import { showToast } from '@/utils/ui';
 import { ManagerAutocomplete } from './manager-autocomplete';
-
-// GM_* APIのグローバル宣言
-declare const GM_setValue: (key: string, value: any) => void;
+import { addClickListener, addKeydownListener } from '@/utils/events';
+import { getManagerElements, getSiteRowInputs } from '@/utils/dom-helpers';
+import { setFocusTimeout, setUrlRevokeTimeout } from '@/utils/timing';
+import { GM_setValue } from '@/types/globals';
 
 /**
  * サイトマネージャUIを管理するクラス
@@ -82,56 +83,51 @@ export class Manager {
   private setupManagerEventListeners(): void {
     try {
       // DOM要素を取得
-      const addSiteBtn = this.dom.mgrBox?.querySelector('#vm-add-site');
-      const saveBtn = this.dom.mgrBox?.querySelector('#vm-save');
-      const closeBtn = this.dom.mgrBox?.querySelector('#vm-close');
-      const exportBtn = this.dom.mgrBox?.querySelector('#vm-export');
-      const importInput = this.dom.mgrBox?.querySelector('#vm-import-file') as HTMLInputElement;
-      const importBtn = this.dom.mgrBox?.querySelector('#vm-import');
+      const elements = getManagerElements(this.dom.mgrBox!);
 
       // イベントリスナーを設定
-      if (addSiteBtn) {
-        addSiteBtn.addEventListener('click', () => 
+      if (elements.addSiteBtn) {
+        addClickListener(elements.addSiteBtn, () =>
           this.addSiteRow({ name:'', url:'', tags:[] })
         );
       }
       
-      if (saveBtn) {
-        saveBtn.addEventListener('click', () => this.saveManager());
+      if (elements.saveBtn) {
+        addClickListener(elements.saveBtn, () => this.saveManager());
       }
       
-      if (closeBtn) {
-        closeBtn.addEventListener('click', () => this.closeManager());
+      if (elements.closeBtn) {
+        addClickListener(elements.closeBtn, () => this.closeManager());
       }
       
-      if (exportBtn) {
-        exportBtn.addEventListener('click', () => this.exportSites());
+      if (elements.exportBtn) {
+        addClickListener(elements.exportBtn, () => this.exportSites());
       }
       
       if (this.dom.mgrBox) {
-        this.dom.mgrBox.addEventListener('keydown', (e: KeyboardEvent) => {
-          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { 
-            e.preventDefault(); 
-            this.saveManager(); 
+        addKeydownListener(this.dom.mgrBox, (e: KeyboardEvent) => {
+          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+            e.preventDefault();
+            this.saveManager();
           }
-          if (e.key === 'Escape') { 
-            e.preventDefault(); 
-            this.closeManager(); 
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            this.closeManager();
           }
         });
       }
       
-      if (importBtn) {
-        importBtn.addEventListener('click', () => {
-          if (!importInput) return;
-          importInput.value = '';
-          importInput.click();
+      if (elements.importBtn) {
+        addClickListener(elements.importBtn, () => {
+          if (!elements.importInput) return;
+          elements.importInput.value = '';
+          elements.importInput.click();
         });
       }
       
-      if (importInput) {
-        importInput.addEventListener('change', () => {
-          const file = importInput.files && importInput.files[0];
+      if (elements.importInput) {
+        elements.importInput.addEventListener('change', () => {
+          const file = elements.importInput.files && elements.importInput.files[0];
           if (!file) return;
           const reader = new FileReader();
           reader.onload = () => {
@@ -160,10 +156,10 @@ export class Manager {
     this.renderManager();
     if (this.dom.mgrOverlay) {
       this.dom.mgrOverlay.style.display = 'block';
-      setTimeout(() => { 
-        const i = this.dom.mgrBox?.querySelector('input'); 
-        if (i) i.focus(); 
-      }, 0);
+      setFocusTimeout(() => {
+        const i = this.dom.mgrBox?.querySelector('input');
+        if (i) (i as HTMLInputElement).focus();
+      });
     }
   }
 
@@ -188,7 +184,7 @@ export class Manager {
   /**
    * サイト行を追加
    */
-  addSiteRow(data: any): void {
+  addSiteRow(data: Partial<SiteEntry>): void {
     if (!this.dom.siteBodyEl) return;
     
     const tr = document.createElement('tr');
@@ -205,14 +201,14 @@ export class Manager {
         <button class="btn danger" data-del>削除</button>
       </td>`;
 
-    const urlInput = tr.querySelector('input[data-field="url"]') as HTMLInputElement;
-    const tagsInput = tr.querySelector('input[data-field="tags"]') as HTMLInputElement;
+    const inputs = getSiteRowInputs(tr);
+    const urlInput = inputs.urlInput;
+    const tagsInput = inputs.tagsInput;
     
     // タグ入力フィールドにオートコンプリートを適用
     if (tagsInput) {
       new ManagerAutocomplete(this.dom, tagsInput, (tag: string) => {
         // タグ選択時の処理はManagerAutocompleteクラス内で実装済み
-        console.log('[CommandPalette] Tag selected:', tag);
       });
     }
     
@@ -298,7 +294,7 @@ export class Manager {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      setUrlRevokeTimeout(() => URL.revokeObjectURL(url));
       return true;
     } catch (e) {
       console.error('[CommandPalette] export failed', e);

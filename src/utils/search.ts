@@ -60,38 +60,18 @@ export const getAllTags = (entries: SiteEntry[] = []): string[] => {
   
   const tagSet = new Set<string>();
   
-  // デバッグ情報
-  console.log('[CommandPalette] getAllTags - entries count:', entries.length);
-  console.log('[CommandPalette] getAllTags - entries:', entries);
-  
-  entries.forEach((item, index) => {
-    console.log(`[CommandPalette] Processing entry ${index}:`, {
-      id: item.id,
-      name: item.name,
-      tags: item.tags,
-      tagsType: typeof item.tags,
-      tagsIsArray: Array.isArray(item.tags)
-    });
-    
+  entries.forEach((item) => {
     if (item.tags && Array.isArray(item.tags)) {
-      item.tags.forEach((tag, tagIndex) => {
-        console.log(`[CommandPalette] Processing tag ${tagIndex}:`, tag);
+      item.tags.forEach((tag) => {
         if (tag && typeof tag === 'string' && tag.trim()) {
           const cleanTag = tag.trim();
           tagSet.add(cleanTag);
-          console.log(`[CommandPalette] Added tag: "${cleanTag}"`);
-        } else {
-          console.log(`[CommandPalette] Skipped invalid tag:`, tag);
         }
       });
-    } else {
-      console.log(`[CommandPalette] Entry ${index} has no valid tags array`);
     }
   });
   
-  const result = Array.from(tagSet).sort();
-  console.log('[CommandPalette] getAllTags - final tags:', result);
-  return result;
+  return Array.from(tagSet).sort();
 };
 
 /**

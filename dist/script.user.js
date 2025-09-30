@@ -127,6 +127,17 @@
         }
     };
 
+    /**
+     * タイミング関連の定数
+     */
+    const TIMING = {
+        // フォーカス遅延
+        FOCUS_DELAY: 0,
+        // URL破棄遅延
+        URL_REVOKE_DELAY: 2000,
+        // ブラーチェック遅延
+        BLUR_CHECK_DELAY: 0};
+
     const STORAGE_KEY = 'vm_sites_palette__sites';
     const SETTINGS_KEY = 'vm_sites_palette__settings_v2';
     const USAGE_KEY = 'vm_sites_palette__usage_v1';
@@ -340,37 +351,17 @@
             }
         }
         const tagSet = new Set();
-        // デバッグ情報
-        console.log('[CommandPalette] getAllTags - entries count:', entries.length);
-        console.log('[CommandPalette] getAllTags - entries:', entries);
-        entries.forEach((item, index) => {
-            console.log(`[CommandPalette] Processing entry ${index}:`, {
-                id: item.id,
-                name: item.name,
-                tags: item.tags,
-                tagsType: typeof item.tags,
-                tagsIsArray: Array.isArray(item.tags)
-            });
+        entries.forEach((item) => {
             if (item.tags && Array.isArray(item.tags)) {
-                item.tags.forEach((tag, tagIndex) => {
-                    console.log(`[CommandPalette] Processing tag ${tagIndex}:`, tag);
+                item.tags.forEach((tag) => {
                     if (tag && typeof tag === 'string' && tag.trim()) {
                         const cleanTag = tag.trim();
                         tagSet.add(cleanTag);
-                        console.log(`[CommandPalette] Added tag: "${cleanTag}"`);
-                    }
-                    else {
-                        console.log(`[CommandPalette] Skipped invalid tag:`, tag);
                     }
                 });
             }
-            else {
-                console.log(`[CommandPalette] Entry ${index} has no valid tags array`);
-            }
         });
-        const result = Array.from(tagSet).sort();
-        console.log('[CommandPalette] getAllTags - final tags:', result);
-        return result;
+        return Array.from(tagSet).sort();
     };
     /**
      * 使用回数ブーストを取得する
@@ -858,6 +849,90 @@
     }
 
     /**
+     * イベントリスナー関連のユーティリティ関数
+     */
+    /**
+     * 要素にクリックイベントリスナーを追加する
+     */
+    const addClickListener = (element, handler) => {
+        element?.addEventListener('click', handler);
+    };
+    /**
+     * 要素にキーダウンイベントリスナーを追加する
+     */
+    const addKeydownListener = (element, handler) => {
+        element?.addEventListener('keydown', handler);
+    };
+    /**
+     * 要素に入力イベントリスナーを追加する
+     */
+    const addInputListener = (element, handler) => {
+        element?.addEventListener('input', handler);
+    };
+    /**
+     * 要素にブラーイベントリスナーを追加する
+     */
+    const addBlurListener = (element, handler) => {
+        element?.addEventListener('blur', handler);
+    };
+    /**
+     * 要素にマウスエンターイベントリスナーを追加する
+     */
+    const addMouseEnterListener = (element, handler) => {
+        element?.addEventListener('mouseenter', handler);
+    };
+    /**
+     * 要素にマウスダウンイベントリスナーを追加する
+     */
+    const addMouseDownListener = (element, handler) => {
+        element?.addEventListener('mousedown', handler);
+    };
+    /**
+     * オートコンプリート用の特殊なイベント設定
+     * 入力フィールドとオートコンプリートリストの連携を設定する
+     */
+    const setupAutocompleteEvents = (inputEl, autocompleteEl, onHide) => {
+        // 入力フィールドのフォーカスが外れた時の処理
+        addBlurListener(inputEl, (e) => {
+            const to = e.relatedTarget;
+            const insideAuto = to && autocompleteEl.contains(to);
+            // 少し遅延して判定（フォーカス移動を待つ）
+            setTimeout(() => {
+                if (!insideAuto && !autocompleteEl.matches(':hover')) {
+                    onHide();
+                }
+            }, 0);
+        });
+        // オートコンプリート内クリック時にフォーカスを奪われても閉じないようにする
+        addMouseDownListener(autocompleteEl, (e) => {
+            e.preventDefault(); // 入力の blur を抑止
+            inputEl.focus(); // フォーカスを戻す
+        });
+    };
+
+    /**
+     * タイミング関連のユーティリティ関数
+     */
+    /**
+     * ブラーチェック用の遅延処理を実行する
+     */
+    const setBlurCheckTimeout = (callback) => {
+        return setTimeout(callback, TIMING.BLUR_CHECK_DELAY);
+    };
+    /**
+     * URL破棄用の遅延処理を実行する
+     */
+    const setUrlRevokeTimeout = (callback) => {
+        return setTimeout(callback, TIMING.URL_REVOKE_DELAY);
+    };
+    /**
+     * フォーカス設定用の遅延処理を実行する
+     */
+    const setFocusTimeout = (callback) => {
+        return setTimeout(callback, TIMING.FOCUS_DELAY);
+    };
+
+    /**
      * メインパレットUIを管理するクラス
      */
     class Palette {
@@ -902,7 +977,7 @@
             this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
             this.state.activeIndex = 0;
             this.renderList();
-            setTimeout(() => this.dom.inputEl.focus(), 0);
+            setFocusTimeout(() => this.dom.inputEl.focus());
         }
         /**
          * パレットを閉じる
@@ -1271,12 +1346,7 @@
             });
           }
       
-          filteredTags.sort((a, b) => {
-            const aDepth = (a.match(/\//g) || []).length;
-            const bDepth = (b.match(/\//g) || []).length;
-            if (aDepth !== bDepth) return aDepth - bDepth;
-            return a.localeCompare(b);
-          });
+          filteredTags = sortTagsByHierarchy(filteredTags);
       
           return filteredTags.slice(0, 5).map((tag, index) => {
             const suggestion = document.createElement('div');
@@ -1316,13 +1386,13 @@
             suggestion.appendChild(tagCount);
             suggestion.appendChild(kbd);
             
-            suggestion.addEventListener('mouseenter', () => {
+            addMouseEnterListener(suggestion, () => {
               this.state.activeIndex = index;
               this.updateActive();
             });
             
-            suggestion.addEventListener('mousedown', e => e.preventDefault());
-            suggestion.addEventListener('click', () => {
+            addMouseDownListener(suggestion, e => e.preventDefault());
+            addClickListener(suggestion, () => {
               this.selectTag(tag);
             });
       
@@ -1461,12 +1531,12 @@
             const item = document.createElement('div');
             item.className = 'item';
             item.dataset.index = index.toString();
-            item.addEventListener('mouseenter', () => {
+            addMouseEnterListener(item, () => {
                 this.state.activeIndex = index;
                 this.updateActive();
             });
-            item.addEventListener('mousedown', e => e.preventDefault());
-            item.addEventListener('click', () => {
+            addMouseDownListener(item, e => e.preventDefault());
+            addClickListener(item, () => {
                 this.openItem(entry, false);
             });
             const icon = createFaviconEl(entry);
@@ -1538,6 +1608,25 @@
     }
 
     /**
+     * タグソート関連のユーティリティ関数
+     */
+    /**
+     * タグを階層構造でソートする
+     * スラッシュで区切られた階層の深さを優先し、同じ階層内ではアルファベット順にソートする
+     */
+    const sortTagsByHierarchy = (tags) => {
+        return tags.sort((a, b) => {
+            const aDepth = (a.match(/\//g) || []).length;
+            const bDepth = (b.match(/\//g) || []).length;
+            // 階層の深さが異なる場合は浅い方を優先
+            if (aDepth !== bDepth)
+                return aDepth - bDepth;
+            // 同じ階層の場合はアルファベット順
+            return a.localeCompare(b);
+        });
+    };
+
+    /**
      * オートコンプリートUIを管理するクラス
      */
     class Autocomplete {
@@ -1552,8 +1641,6 @@
                     if (shouldShowTagSuggestions(value)) {
                         const hashIndex = value.indexOf('#');
                         const afterHash = value.slice(hashIndex + 1);
-                        console.log('[CommandPalette] Autocomplete input - value:', value);
-                        console.log('[CommandPalette] Autocomplete input - afterHash:', afterHash);
                         this.showAutocomplete(afterHash);
                     }
                     else {
@@ -1674,32 +1761,17 @@
                 }
             }
             // オートコンプリートのイベントリスナーを追加
-            this.dom.inputEl.addEventListener('input', this.handleAutocompleteInput);
-            this.dom.inputEl.addEventListener('keydown', this.handleAutocompleteKeydown);
+            addInputListener(this.dom.inputEl, this.handleAutocompleteInput);
+            addKeydownListener(this.dom.inputEl, this.handleAutocompleteKeydown);
             // blur 時、実際に外へ出たときだけ閉じる
-            this.dom.inputEl.addEventListener('blur', (e) => {
-                const to = e.relatedTarget;
-                const insideAuto = to && this.dom.autocompleteEl.contains(to);
-                setTimeout(() => {
-                    if (!insideAuto && !this.dom.autocompleteEl.matches(':hover')) {
-                        this.hideAutocomplete();
-                    }
-                }, 0);
-            });
-            // オートコンプリート内クリック時にフォーカスを奪われても閉じない
-            this.dom.autocompleteEl.addEventListener('mousedown', (e) => {
-                e.preventDefault(); // 入力の blur を抑止
-                this.dom.inputEl.focus(); // フォーカスを戻す
-            });
+            setupAutocompleteEvents(this.dom.inputEl, this.dom.autocompleteEl, () => this.hideAutocomplete());
         }
         /**
          * オートコンプリートを表示
          */
         showAutocomplete(query) {
             const entries = this.getEntries();
-            console.log('[CommandPalette] Autocomplete - entries from storage:', entries);
             const allTags = getAllTags(entries);
-            console.log('[CommandPalette] Autocomplete - allTags:', allTags);
             const tagCounts = {};
             entries.forEach(entry => {
                 if (entry.tags) {
@@ -1729,33 +1801,23 @@
                 filteredTags = allTags.filter(tag => {
                     const tagLower = tag.toLowerCase();
                     const queryLower = query.toLowerCase();
-                    console.log(`[CommandPalette] Filtering tag "${tag}" against query "${query}"`);
                     // 完全一致
                     if (tagLower === queryLower) {
-                        console.log(`[CommandPalette] Exact match: ${tag}`);
                         return true;
                     }
                     // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
                     const parts = tag.split('/');
                     if (parts.some(part => part.toLowerCase() === queryLower)) {
-                        console.log(`[CommandPalette] Parent tag match: ${tag}`);
                         return true;
                     }
                     // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
                     if (tagLower.includes(queryLower)) {
-                        console.log(`[CommandPalette] Partial match: ${tag}`);
                         return true;
                     }
                     return false;
                 });
             }
-            filteredTags.sort((a, b) => {
-                const aDepth = (a.match(/\//g) || []).length;
-                const bDepth = (b.match(/\//g) || []).length;
-                if (aDepth !== bDepth)
-                    return aDepth - bDepth;
-                return a.localeCompare(b);
-            });
+            filteredTags = sortTagsByHierarchy(filteredTags);
             const filteredTagObjects = filteredTags.map(tag => {
                 // 階層タグの場合、親タグと子タグの件数を合算
                 let count = tagCounts[tag] || 0;
@@ -1839,8 +1901,8 @@
         </div>
         <span class="autocomplete-count">${tag.count}件</span>
       `;
-                item.addEventListener('click', () => this.selectAutocompleteItem(tag));
-                item.addEventListener('mouseenter', () => {
+                addClickListener(item, () => this.selectAutocompleteItem(tag));
+                addMouseEnterListener(item, () => {
                     this.state.index = index;
                     this.updateAutocompleteActive();
                 });
@@ -2006,11 +2068,11 @@
             this.handleBlur = (e) => {
                 const to = e.relatedTarget;
                 const insideAuto = to && this.autocompleteEl.contains(to);
-                setTimeout(() => {
+                setBlurCheckTimeout(() => {
                     if (!insideAuto && !this.autocompleteEl.matches(':hover')) {
                         this.hideTagSuggestions();
                     }
-                }, 0);
+                });
             };
             this.dom = dom;
             this.tagInput = tagInput;
@@ -2138,13 +2200,13 @@
          */
         setupEventListeners() {
             // 入力イベント
-            this.tagInput.addEventListener('input', this.handleInput);
+            addInputListener(this.tagInput, this.handleInput);
             // キーボードイベント
-            this.tagInput.addEventListener('keydown', this.handleKeydown);
+            addKeydownListener(this.tagInput, this.handleKeydown);
             // フォーカスイベント
-            this.tagInput.addEventListener('blur', this.handleBlur);
+            addBlurListener(this.tagInput, this.handleBlur);
             // オートコンプリート内クリック時にフォーカスを奪われても閉じない
-            this.autocompleteEl.addEventListener('mousedown', (e) => {
+            addMouseDownListener(this.autocompleteEl, (e) => {
                 e.preventDefault(); // 入力の blur を抑止
                 this.tagInput.focus(); // フォーカスを戻す
             });
@@ -2184,13 +2246,7 @@
                 return false;
             });
             // 階層の浅い順、アルファベット順にソート
-            filteredTags.sort((a, b) => {
-                const aDepth = (a.match(/\//g) || []).length;
-                const bDepth = (b.match(/\//g) || []).length;
-                if (aDepth !== bDepth)
-                    return aDepth - bDepth;
-                return a.localeCompare(b);
-            });
+            filteredTags = sortTagsByHierarchy(filteredTags);
             // タグ候補オブジェクトに変換
             const filteredTagObjects = filteredTags.map(tag => {
                 let count = tagCounts[tag] || 0;
@@ -2273,8 +2329,8 @@
           <span class="tag-autocomplete-count">${tag.count}件</span>
         `;
                 }
-                item.addEventListener('click', () => this.selectTag(tag.name));
-                item.addEventListener('mouseenter', () => {
+                addClickListener(item, () => this.selectTag(tag.name));
+                addMouseEnterListener(item, () => {
                     this.state.index = index;
                     this.updateActive();
                 });
@@ -2321,6 +2377,81 @@
             this.onTagSelect(tag);
         }
     }
+
+    /**
+     * DOM要素取得関連のユーティリティ関数
+     */
+    /**
+     * 親要素からIDで要素を取得する
+     */
+    const getElementById = (parent, id) => {
+        return parent.querySelector(`#${id}`);
+    };
+    /**
+     * 親要素からname属性で要素リストを取得する
+     */
+    const getElementsByName = (parent, name) => {
+        return parent.querySelectorAll(`[name="${name}"]`);
+    };
+    /**
+     * 親要素からセレクタで最初の要素を取得する
+     */
+    const querySelector = (parent, selector) => {
+        return parent.querySelector(selector);
+    };
+    /**
+     * 設定画面用のDOM要素を取得する
+     */
+    const getSettingsElements = (setBox) => {
+        return {
+            closeBtn: getElementById(setBox, 'vs-close'),
+            saveBtn: getElementById(setBox, 'vs-save'),
+            resetBtn: getElementById(setBox, 'vs-reset'),
+            clearFavBtn: getElementById(setBox, 'vs-clear-fav'),
+            hotkey1Input: getElementById(setBox, 'vs-hotkey1'),
+            hotkey2Input: getElementById(setBox, 'vs-hotkey2'),
+            accentInput: getElementById(setBox, 'vs-accent'),
+            accentText: getElementById(setBox, 'vs-accent-text'),
+            blocklistInput: getElementById(setBox, 'vs-blocklist'),
+            autoOpenInput: getElementById(setBox, 'vs-auto-open'),
+            enterInputs: getElementsByName(setBox, 'vs-enter'),
+            themeInputs: getElementsByName(setBox, 'vs-theme')
+        };
+    };
+    /**
+     * マネージャー画面用のDOM要素を取得する
+     */
+    const getManagerElements = (mgrBox) => {
+        return {
+            addSiteBtn: getElementById(mgrBox, 'vm-add-site'),
+            saveBtn: getElementById(mgrBox, 'vm-save'),
+            closeBtn: getElementById(mgrBox, 'vm-close'),
+            exportBtn: getElementById(mgrBox, 'vm-export'),
+            importInput: getElementById(mgrBox, 'vm-import-file'),
+            importBtn: getElementById(mgrBox, 'vm-import'),
+            siteBodyEl: getElementById(mgrBox, 'vm-rows-sites')
+        };
+    };
+    /**
+     * サイト行の入力要素を取得する
+     */
+    const getSiteRowInputs = (row) => {
+        return {
+            nameInput: querySelector(row, 'input[data-field="name"]'),
+            urlInput: querySelector(row, 'input[data-field="url"]'),
+            tagsInput: querySelector(row, 'input[data-field="tags"]'),
+            upBtn: querySelector(row, '[data-up]'),
+            downBtn: querySelector(row, '[data-down]'),
+            delBtn: querySelector(row, '[data-del]'),
+            testBtn: querySelector(row, '[data-test]')
+        };
+    };
+    /**
+     * 入力要素の値を安全に取得する
+     */
+    const getInputValue = (input) => {
+        return input?.value?.trim() || '';
+    };
 
     /**
      * サイトマネージャUIを管理するクラス
@@ -2388,27 +2519,22 @@
         setupManagerEventListeners() {
             try {
                 // DOM要素を取得
-                const addSiteBtn = this.dom.mgrBox?.querySelector('#vm-add-site');
-                const saveBtn = this.dom.mgrBox?.querySelector('#vm-save');
-                const closeBtn = this.dom.mgrBox?.querySelector('#vm-close');
-                const exportBtn = this.dom.mgrBox?.querySelector('#vm-export');
-                const importInput = this.dom.mgrBox?.querySelector('#vm-import-file');
-                const importBtn = this.dom.mgrBox?.querySelector('#vm-import');
+                const elements = getManagerElements(this.dom.mgrBox);
                 // イベントリスナーを設定
-                if (addSiteBtn) {
-                    addSiteBtn.addEventListener('click', () => this.addSiteRow({ name: '', url: '', tags: [] }));
+                if (elements.addSiteBtn) {
+                    addClickListener(elements.addSiteBtn, () => this.addSiteRow({ name: '', url: '', tags: [] }));
                 }
-                if (saveBtn) {
-                    saveBtn.addEventListener('click', () => this.saveManager());
+                if (elements.saveBtn) {
+                    addClickListener(elements.saveBtn, () => this.saveManager());
                 }
-                if (closeBtn) {
-                    closeBtn.addEventListener('click', () => this.closeManager());
+                if (elements.closeBtn) {
+                    addClickListener(elements.closeBtn, () => this.closeManager());
                 }
-                if (exportBtn) {
-                    exportBtn.addEventListener('click', () => this.exportSites());
+                if (elements.exportBtn) {
+                    addClickListener(elements.exportBtn, () => this.exportSites());
                 }
                 if (this.dom.mgrBox) {
-                    this.dom.mgrBox.addEventListener('keydown', (e) => {
+                    addKeydownListener(this.dom.mgrBox, (e) => {
                         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
                             e.preventDefault();
                             this.saveManager();
@@ -2419,17 +2545,17 @@
                         }
                     });
                 }
-                if (importBtn) {
-                    importBtn.addEventListener('click', () => {
-                        if (!importInput)
+                if (elements.importBtn) {
+                    addClickListener(elements.importBtn, () => {
+                        if (!elements.importInput)
                             return;
-                        importInput.value = '';
-                        importInput.click();
+                        elements.importInput.value = '';
+                        elements.importInput.click();
                     });
                 }
-                if (importInput) {
-                    importInput.addEventListener('change', () => {
-                        const file = importInput.files && importInput.files[0];
+                if (elements.importInput) {
+                    elements.importInput.addEventListener('change', () => {
+                        const file = elements.importInput.files && elements.importInput.files[0];
                         if (!file)
                             return;
                         const reader = new FileReader();
@@ -2460,11 +2586,11 @@
             this.renderManager();
             if (this.dom.mgrOverlay) {
                 this.dom.mgrOverlay.style.display = 'block';
-                setTimeout(() => {
+                setFocusTimeout(() => {
                     const i = this.dom.mgrBox?.querySelector('input');
                     if (i)
                         i.focus();
-                }, 0);
+                });
             }
         }
         /**
@@ -2504,13 +2630,13 @@
         <button class="btn" data-test>テスト</button>
         <button class="btn danger" data-del>削除</button>
       </td>`;
-            const urlInput = tr.querySelector('input[data-field="url"]');
-            const tagsInput = tr.querySelector('input[data-field="tags"]');
+            const inputs = getSiteRowInputs(tr);
+            const urlInput = inputs.urlInput;
+            const tagsInput = inputs.tagsInput;
             // タグ入力フィールドにオートコンプリートを適用
             if (tagsInput) {
                 new ManagerAutocomplete(this.dom, tagsInput, (tag) => {
                     // タグ選択時の処理はManagerAutocompleteクラス内で実装済み
-                    console.log('[CommandPalette] Tag selected:', tag);
                 });
             }
             tr.querySelector('[data-up]')?.addEventListener('click', () => this.moveRow(tr, -1, this.dom.siteBodyEl));
@@ -2594,7 +2720,7 @@
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
-                setTimeout(() => URL.revokeObjectURL(url), 2000);
+                setUrlRevokeTimeout(() => URL.revokeObjectURL(url));
                 return true;
             }
             catch (e) {
@@ -2710,18 +2836,19 @@
             if (this.dom.root) {
                 this.dom.root.appendChild(this.dom.setOverlay);
             }
-            this.dom.setBox.querySelector('#vs-close')?.addEventListener('click', () => this.closeSettings());
-            this.dom.setBox.querySelector('#vs-save')?.addEventListener('click', () => this.saveSettingsFromUI());
-            this.dom.setBox.querySelector('#vs-reset')?.addEventListener('click', () => {
+            const elements = getSettingsElements(this.dom.setBox);
+            addClickListener(elements.closeBtn, () => this.closeSettings());
+            addClickListener(elements.saveBtn, () => this.saveSettingsFromUI());
+            addClickListener(elements.resetBtn, () => {
                 this.applySettingsToUI(defaultSettings);
             });
-            this.dom.setBox.querySelector('#vs-clear-fav')?.addEventListener('click', () => {
+            addClickListener(elements.clearFavBtn, () => {
                 // キャッシュをクリア
                 const emptyCache = {};
                 GM_setValue('vm_sites_palette__favcache_v1', emptyCache);
                 showToast('faviconキャッシュを削除しました');
             });
-            this.dom.setBox.addEventListener('keydown', e => {
+            addKeydownListener(this.dom.setBox, e => {
                 if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
                     e.preventDefault();
                     this.saveSettingsFromUI();
@@ -2731,8 +2858,8 @@
                     this.closeSettings();
                 }
             });
-            this.setupHotkeyCapture(this.dom.setBox.querySelector('#vs-hotkey1'), 'hotkeyPrimary');
-            this.setupHotkeyCapture(this.dom.setBox.querySelector('#vs-hotkey2'), 'hotkeySecondary');
+            this.setupHotkeyCapture(elements.hotkey1Input, 'hotkeyPrimary');
+            this.setupHotkeyCapture(elements.hotkey2Input, 'hotkeySecondary');
             this.setupAccentSync();
         }
         /**
@@ -2800,14 +2927,15 @@
         saveSettingsFromUI() {
             if (!this.dom.setBox)
                 return;
+            const elements = getSettingsElements(this.dom.setBox);
             const s = {
-                hotkeyPrimary: this.dom.setBox.querySelector('#vs-hotkey1')?.dataset.sig || defaultSettings.hotkeyPrimary,
-                hotkeySecondary: this.dom.setBox.querySelector('#vs-hotkey2')?.dataset.sig || defaultSettings.hotkeySecondary,
+                hotkeyPrimary: elements.hotkey1Input?.dataset.sig || defaultSettings.hotkeyPrimary,
+                hotkeySecondary: elements.hotkey2Input?.dataset.sig || defaultSettings.hotkeySecondary,
                 enterOpens: (this.dom.setBox.querySelector('input[name="vs-enter"]:checked')?.value || 'current'),
                 theme: (this.dom.setBox.querySelector('input[name="vs-theme"]:checked')?.value || defaultSettings.theme),
-                accentColor: this.normalizeColor(this.dom.setBox.querySelector('#vs-accent-text')?.value || this.dom.setBox.querySelector('#vs-accent')?.value || defaultSettings.accentColor),
-                blocklist: this.dom.setBox.querySelector('#vs-blocklist')?.value || '',
-                autoOpenUrls: this.normalizeAutoOpen(this.dom.setBox.querySelector('#vs-auto-open')?.value)
+                accentColor: this.normalizeColor(getInputValue(elements.accentText) || getInputValue(elements.accentInput) || defaultSettings.accentColor),
+                blocklist: elements.blocklistInput?.value.trim() || '',
+                autoOpenUrls: this.normalizeAutoOpen(elements.autoOpenInput?.value.trim() || '')
             };
             setSettings(s);
             this.cachedSettings = s;
@@ -2845,8 +2973,9 @@
         setupAccentSync() {
             if (!this.dom.setBox)
                 return;
-            const colorInput = this.dom.setBox.querySelector('#vs-accent');
-            const textInput = this.dom.setBox.querySelector('#vs-accent-text');
+            const elements = getSettingsElements(this.dom.setBox);
+            const colorInput = elements.accentInput;
+            const textInput = elements.accentText;
             const hexFull = (v) => /^#?[0-9a-fA-F]{6}$/.test(v.replace(/^#/, ''));
             colorInput.addEventListener('input', () => {
                 const val = colorInput.value;
@@ -3419,10 +3548,9 @@
             if (newItems.length > 0) {
                 const updated = [...existing, ...newItems];
                 window.GM_setValue?.('vm_sites_palette__sites', updated);
-                console.log(`[CommandPalette] Added ${newItems.length} sample entries`);
             }
             else {
-                console.log('[CommandPalette] Sample data already exists');
+                // サンプルデータは既に存在
             }
         }
         catch (error) {

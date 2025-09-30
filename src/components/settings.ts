@@ -3,6 +3,8 @@ import { DOMElements } from '@/core/state';
 import { getSettings, setSettings } from '@/core/storage';
 import { defaultSettings } from '@/constants';
 import { showToast } from '@/utils/ui';
+import { addClickListener, addKeydownListener, addInputListener, addBlurListener, addFocusListener } from '@/utils/events';
+import { getSettingsElements, getInputValue, getTextareaValue } from '@/utils/dom-helpers';
 
 // GM_* APIのグローバル宣言
 declare const GM_setValue: (key: string, value: any) => void;
@@ -97,31 +99,33 @@ export class SettingsUI {
       this.dom.root.appendChild(this.dom.setOverlay);
     }
 
-    this.dom.setBox.querySelector('#vs-close')?.addEventListener('click', () => this.closeSettings());
-    this.dom.setBox.querySelector('#vs-save')?.addEventListener('click', () => this.saveSettingsFromUI());
-    this.dom.setBox.querySelector('#vs-reset')?.addEventListener('click', () => { 
-      this.applySettingsToUI(defaultSettings); 
+    const elements = getSettingsElements(this.dom.setBox);
+    
+    addClickListener(elements.closeBtn, () => this.closeSettings());
+    addClickListener(elements.saveBtn, () => this.saveSettingsFromUI());
+    addClickListener(elements.resetBtn, () => {
+      this.applySettingsToUI(defaultSettings);
     });
-    this.dom.setBox.querySelector('#vs-clear-fav')?.addEventListener('click', () => {
+    addClickListener(elements.clearFavBtn, () => {
       // キャッシュをクリア
       const emptyCache: Record<string, string> = {};
       GM_setValue('vm_sites_palette__favcache_v1', emptyCache);
       showToast('faviconキャッシュを削除しました');
     });
 
-    this.dom.setBox.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { 
-        e.preventDefault(); 
-        this.saveSettingsFromUI(); 
+    addKeydownListener(this.dom.setBox, e => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        this.saveSettingsFromUI();
       }
-      if (e.key === 'Escape') { 
-        e.preventDefault(); 
-        this.closeSettings(); 
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.closeSettings();
       }
     });
 
-    this.setupHotkeyCapture(this.dom.setBox.querySelector('#vs-hotkey1'), 'hotkeyPrimary');
-    this.setupHotkeyCapture(this.dom.setBox.querySelector('#vs-hotkey2'), 'hotkeySecondary');
+    this.setupHotkeyCapture(elements.hotkey1Input, 'hotkeyPrimary');
+    this.setupHotkeyCapture(elements.hotkey2Input, 'hotkeySecondary');
     this.setupAccentSync();
   }
 
@@ -196,14 +200,16 @@ export class SettingsUI {
   saveSettingsFromUI(): void {
     if (!this.dom.setBox) return;
     
+    const elements = getSettingsElements(this.dom.setBox);
+    
     const s: Settings = {
-      hotkeyPrimary: (this.dom.setBox.querySelector('#vs-hotkey1') as HTMLInputElement)?.dataset.sig || defaultSettings.hotkeyPrimary,
-      hotkeySecondary: (this.dom.setBox.querySelector('#vs-hotkey2') as HTMLInputElement)?.dataset.sig || defaultSettings.hotkeySecondary,
+      hotkeyPrimary: elements.hotkey1Input?.dataset.sig || defaultSettings.hotkeyPrimary,
+      hotkeySecondary: elements.hotkey2Input?.dataset.sig || defaultSettings.hotkeySecondary,
       enterOpens: ((this.dom.setBox.querySelector('input[name="vs-enter"]:checked') as HTMLInputElement)?.value || 'current') as 'current' | 'newtab',
       theme: ((this.dom.setBox.querySelector('input[name="vs-theme"]:checked') as HTMLInputElement)?.value || defaultSettings.theme) as 'dark' | 'light',
-      accentColor: this.normalizeColor((this.dom.setBox.querySelector('#vs-accent-text') as HTMLInputElement)?.value || (this.dom.setBox.querySelector('#vs-accent') as HTMLInputElement)?.value || defaultSettings.accentColor),
-      blocklist: (this.dom.setBox.querySelector('#vs-blocklist') as HTMLTextAreaElement)?.value || '',
-      autoOpenUrls: this.normalizeAutoOpen((this.dom.setBox.querySelector('#vs-auto-open') as HTMLTextAreaElement)?.value)
+      accentColor: this.normalizeColor(getInputValue(elements.accentText) || getInputValue(elements.accentInput) || defaultSettings.accentColor),
+      blocklist: elements.blocklistInput?.value.trim() || '',
+      autoOpenUrls: this.normalizeAutoOpen(elements.autoOpenInput?.value.trim() || '')
     };
     
     setSettings(s);
@@ -239,8 +245,9 @@ export class SettingsUI {
   private setupAccentSync(): void {
     if (!this.dom.setBox) return;
     
-    const colorInput = this.dom.setBox.querySelector('#vs-accent') as HTMLInputElement;
-    const textInput = this.dom.setBox.querySelector('#vs-accent-text') as HTMLInputElement;
+    const elements = getSettingsElements(this.dom.setBox);
+    const colorInput = elements.accentInput;
+    const textInput = elements.accentText;
     
     const hexFull = (v: string) => /^#?[0-9a-fA-F]{6}$/.test(v.replace(/^#/, ''));
     

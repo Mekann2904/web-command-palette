@@ -2,6 +2,9 @@ import { DOMElements } from '@/core/state';
 import { getSites } from '@/core/storage';
 import { getAllTags } from '@/utils/search';
 import { escapeHtml } from '@/utils/string';
+import { addClickListener, addMouseEnterListener, addMouseDownListener, addInputListener, addKeydownListener, addBlurListener } from '@/utils/events';
+import { setBlurCheckTimeout, addInputSpace } from '@/utils/timing';
+import { sortTagsByHierarchy } from '@/utils/tag-sort';
 
 /**
  * マネージャーオートコンプリートの状態インターフェース
@@ -167,16 +170,16 @@ export class ManagerAutocomplete {
    */
   setupEventListeners(): void {
     // 入力イベント
-    this.tagInput.addEventListener('input', this.handleInput);
-    
+    addInputListener(this.tagInput, this.handleInput);
+
     // キーボードイベント
-    this.tagInput.addEventListener('keydown', this.handleKeydown);
-    
+    addKeydownListener(this.tagInput, this.handleKeydown);
+
     // フォーカスイベント
-    this.tagInput.addEventListener('blur', this.handleBlur);
-    
+    addBlurListener(this.tagInput, this.handleBlur);
+
     // オートコンプリート内クリック時にフォーカスを奪われても閉じない
-    this.autocompleteEl.addEventListener('mousedown', (e) => {
+    addMouseDownListener(this.autocompleteEl, (e) => {
       e.preventDefault();        // 入力の blur を抑止
       this.tagInput.focus();    // フォーカスを戻す
     });
@@ -229,11 +232,11 @@ export class ManagerAutocomplete {
   handleBlur = (e: FocusEvent): void => {
     const to = e.relatedTarget as Node;
     const insideAuto = to && this.autocompleteEl.contains(to);
-    setTimeout(() => {
+    setBlurCheckTimeout(() => {
       if (!insideAuto && !this.autocompleteEl.matches(':hover')) {
         this.hideTagSuggestions();
       }
-    }, 0);
+    });
   };
 
   /**
@@ -275,12 +278,7 @@ export class ManagerAutocomplete {
     });
     
     // 階層の浅い順、アルファベット順にソート
-    filteredTags.sort((a, b) => {
-      const aDepth = (a.match(/\//g) || []).length;
-      const bDepth = (b.match(/\//g) || []).length;
-      if (aDepth !== bDepth) return aDepth - bDepth;
-      return a.localeCompare(b);
-    });
+    filteredTags = sortTagsByHierarchy(filteredTags);
     
     // タグ候補オブジェクトに変換
     const filteredTagObjects = filteredTags.map(tag => {
@@ -377,8 +375,8 @@ export class ManagerAutocomplete {
         `;
       }
       
-      item.addEventListener('click', () => this.selectTag(tag.name));
-      item.addEventListener('mouseenter', () => {
+      addClickListener(item, () => this.selectTag(tag.name));
+      addMouseEnterListener(item, () => {
         this.state.index = index;
         this.updateActive();
       });
