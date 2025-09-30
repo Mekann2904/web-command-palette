@@ -159,8 +159,14 @@ class CommandPaletteApp {
     
     // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
     this.dom.inputEl.addEventListener('keydown', (e) => {
-      // 入力フィールド内ではすべてのキーを許可
-      e.stopPropagation();
+      // 文字入力関連のキーのみ伝播を停止
+      // 矢印キー、Enter、Escなどはパネル操作に必要なので伝播を許可
+      const isCharacterKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+      const isSpecialKey = ['Backspace', 'Delete'].includes(e.key);
+      
+      if (isCharacterKey || isSpecialKey) {
+        e.stopPropagation();
+      }
     }, true);
     
     // ヒントエリアのクリックイベント

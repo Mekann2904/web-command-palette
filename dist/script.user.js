@@ -3443,10 +3443,7 @@
                 const target = e.target;
                 const isInPalette = target && (target.closest('#vm-cmd-palette-host') ||
                     target.closest('.overlay') ||
-                    target.closest('.panel') ||
-                    // Shadow DOM内の要素もチェック
-                    (target.getRootNode() instanceof ShadowRoot &&
-                        target.getRootNode().host?.closest('#vm-cmd-palette-host')));
+                    target.closest('.panel'));
                 console.log('[Debug] Is in palette:', isInPalette, 'Target:', target);
                 // パレット内からのイベントでない場合は無視
                 if (!isInPalette) {
@@ -3478,6 +3475,11 @@
                 ];
                 // 修飾キーのみの場合は許可
                 if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) {
+                    return;
+                }
+                // Meta+Enter（Cmd+Enter）は常に許可（Web検索用）
+                if (e.key === 'Enter' && e.metaKey) {
+                    console.log('[Debug] Allowing Cmd+Enter for web search');
                     return;
                 }
                 // 許可されたキーでない場合は無視
@@ -3888,8 +3890,13 @@
             this.dom.inputEl.addEventListener('input', () => this.renderList());
             // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
             this.dom.inputEl.addEventListener('keydown', (e) => {
-                // 入力フィールド内ではすべてのキーを許可
-                e.stopPropagation();
+                // 文字入力関連のキーのみ伝播を停止
+                // 矢印キー、Enter、Escなどはパネル操作に必要なので伝播を許可
+                const isCharacterKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+                const isSpecialKey = ['Backspace', 'Delete'].includes(e.key);
+                if (isCharacterKey || isSpecialKey) {
+                    e.stopPropagation();
+                }
             }, true);
             // ヒントエリアのクリックイベント
             this.dom.hintEl.addEventListener('click', (e) => {

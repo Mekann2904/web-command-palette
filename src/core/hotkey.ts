@@ -152,6 +152,12 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
         return;
       }
       
+      // Meta+Enter（Cmd+Enter）は常に許可（Web検索用）
+      if (e.key === 'Enter' && e.metaKey) {
+        console.log('[Debug] Allowing Cmd+Enter for web search');
+        return;
+      }
+      
       // 許可されたキーでない場合は無視
       if (!allowedKeys.includes(e.key)) {
         console.log('[Debug] Blocking key:', e.key);
