@@ -2,7 +2,7 @@ import { SiteEntry, Settings } from '@/types';
 import { AppState, DOMElements } from '@/core/state';
 import { getSettings, getSites } from '@/core/storage';
 import { DEFAULT_PLACEHOLDER, themes } from '@/constants';
-import { extractTagFilter, filterAndScoreEntries } from '@/utils/search';
+import { extractTagFilter, filterAndScoreEntries, filterEntriesByTag, shouldShowTagSuggestions } from '@/utils/search';
 import { createFaviconEl } from '@/utils/dom';
 import { escapeHtml, normalize } from '@/utils/string';
 import { debounce } from '@/utils/debounce';
@@ -231,14 +231,63 @@ export class Palette {
         }
 
         /* タグ候補 */
-        .tag-suggestion { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; background: var(--tag-suggestion-bg); border-bottom: 1px solid var(--border-color); }
-        .tag-suggestion:hover, .tag-suggestion.active { background: var(--item-active); transform: translateX(2px); }
-        .tag-suggestion .tag-icon { width: 18px; height: 18px; border-radius: 4px; background: var(--accent-color); color: white; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
-        .tag-suggestion .tag-info { display: flex; flex-direction: column; gap: 2px; }
-        .tag-suggestion .tag-name { font-size: 14px; font-weight: 500; }
-        .tag-suggestion .tag-path { font-size: 11px; color: var(--muted); }
-        .tag-suggestion .tag-count { font-size: 12px; color: var(--muted); }
-        .tag-suggestion .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
+        .tag-suggestion {
+          display: grid;
+          grid-template-columns: 28px 1fr auto;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 14px;
+          cursor: pointer;
+          transition: background 0.12s ease, transform 0.12s ease;
+          background: var(--tag-suggestion-bg);
+          border-bottom: 1px solid var(--border-color);
+          border-radius: 0;
+        }
+        .tag-suggestion:first-child { border-radius: 8px 8px 0 0; }
+        .tag-suggestion:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
+        .tag-suggestion:hover, .tag-suggestion.active {
+          background: var(--item-active);
+          transform: translateX(2px);
+        }
+        .tag-suggestion .tag-icon {
+          width: 18px;
+          height: 18px;
+          border-radius: 4px;
+          background: var(--accent-color);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .tag-suggestion .tag-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .tag-suggestion .tag-name {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--panel-text);
+        }
+        .tag-suggestion .tag-path {
+          font-size: 11px;
+          color: var(--muted);
+        }
+        .tag-suggestion .tag-count {
+          font-size: 12px;
+          color: var(--muted);
+        }
+        .tag-suggestion .kbd {
+          display: inline-block;
+          padding: 2px 6px;
+          border-radius: 6px;
+          background: var(--hint-bg);
+          border: 1px solid var(--border-color);
+          font-size: 12px;
+          color: var(--input-text);
+        }
       `;
       
       if (this.dom.root) {
@@ -268,11 +317,13 @@ export class Palette {
     const rawQuery = this.dom.inputEl?.value || '';
     const { tagFilter, textQuery } = extractTagFilter(rawQuery);
     const entries = this.getEntries();
-    const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => normalize(t) === tagFilter)) : entries;
+    
+    // タグフィルタを適用
+    const filtered = tagFilter ? filterEntriesByTag(entries, tagFilter) : entries;
     const scored = filterAndScoreEntries(filtered, textQuery, this.getUsageCache());
     
     // タグ候補を表示するか判定
-    const shouldShowTagSuggestions = rawQuery.includes('#') && !rawQuery.includes(' ');
+    const showTagSuggestions = shouldShowTagSuggestions(rawQuery);
     
     if (scored.length) {
       if (this.state.activeIndex >= scored.length) this.state.activeIndex = scored.length - 1;
@@ -286,9 +337,9 @@ export class Palette {
     const hasQuery = !!(textQuery || tagFilter);
 
     if (useVirtualScroll) {
-      this.renderVirtualList(scored, hasQuery, shouldShowTagSuggestions);
+      this.renderVirtualList(scored, hasQuery, showTagSuggestions);
     } else {
-      this.renderNormalList(scored, hasQuery, shouldShowTagSuggestions);
+      this.renderNormalList(scored, hasQuery, showTagSuggestions);
     }
 
     this.state.currentItems = scored;
@@ -298,7 +349,7 @@ export class Palette {
   /**
    * 仮想スクロールを使用してリストをレンダリング
    */
-  private renderVirtualList(scored: SiteEntry[], hasQuery: boolean, shouldShowTagSuggestions: boolean = false): void {
+  private renderVirtualList(scored: SiteEntry[], hasQuery: boolean, showTagSuggestions: boolean = false): void {
     if (!this.dom.listEl) return;
 
     // 仮想スクロールコンテナを初期化
@@ -307,6 +358,7 @@ export class Palette {
     }
 
     // 仮想スクロール用のアイテムデータに変換
+    // タグ候補はオートコンプリート機能に任せるため、ここでは考慮しない
     const virtualItems: VirtualScrollItem[] = scored.map((entry, index) => ({
       id: entry.id,
       data: { entry, index }
@@ -336,28 +388,15 @@ export class Palette {
   /**
    * 通常のリストをレンダリング
    */
-  private renderNormalList(scored: SiteEntry[], hasQuery: boolean, shouldShowTagSuggestions: boolean = false): void {
+  private renderNormalList(scored: SiteEntry[], hasQuery: boolean, showTagSuggestions: boolean = false): void {
     if (!this.dom.listEl) return;
 
     this.dom.listEl.innerHTML = '';
     
-    // タグ候補を表示
-    if (shouldShowTagSuggestions) {
-      const tagSuggestions = this.createTagSuggestions();
-      tagSuggestions.forEach((suggestion, idx) => {
-        suggestion.style.opacity = '0';
-        suggestion.style.transform = 'translateY(10px)';
-        
-        // アニメーションを適用
-        setTimeout(() => {
-          scaleIn(suggestion, 120);
-        }, idx * 30);
-        
-        this.dom.listEl!.appendChild(suggestion);
-      });
-    }
+    // タグ候補はオートコンプリート機能に任せるため、ここでは表示しない
+    // showTagSuggestions パラメータは互換性のために残す
     
-    if (!scored.length && !shouldShowTagSuggestions) {
+    if (!scored.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
       empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
@@ -367,22 +406,23 @@ export class Palette {
 
     // アイテムをアニメーション付きで追加
     scored.forEach((entry, idx) => {
-      const item = this.createListItem(entry, idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0));
+      const item = this.createListItem(entry, idx);
       item.style.opacity = '0';
       item.style.transform = 'translateY(10px)';
       
       // アニメーションを適用
       setTimeout(() => {
         scaleIn(item, 120);
-      }, (idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0)) * 30);
+      }, idx * 30);
       
       this.dom.listEl!.appendChild(item);
     });
   }
 
   /**
-   * タグ候補を作成
+   * タグ候補を作成（オートコンプリート機能に統一したため使用しない）
    */
+  /*
   private createTagSuggestions(): HTMLElement[] {
     const rawQuery = this.dom.inputEl?.value || '';
     const { tagFilter, textQuery } = extractTagFilter(rawQuery);
@@ -478,23 +518,25 @@ export class Palette {
       suggestion.appendChild(tagCount);
       suggestion.appendChild(kbd);
       
-      suggestion.addEventListener('mouseenter', () => { 
-        this.state.activeIndex = index; 
-        this.updateActive(); 
+      suggestion.addEventListener('mouseenter', () => {
+        this.state.activeIndex = index;
+        this.updateActive();
       });
       
       suggestion.addEventListener('mousedown', e => e.preventDefault());
-      suggestion.addEventListener('click', () => { 
-        this.selectTag(tag); 
+      suggestion.addEventListener('click', () => {
+        this.selectTag(tag);
       });
 
       return suggestion;
     });
   }
+  */
 
   /**
-   * タグ候補数を取得
+   * タグ候補数を取得（オートコンプリート機能に統一したため使用しない）
    */
+  /*
   private getTagSuggestionsCount(): number {
     const rawQuery = this.dom.inputEl?.value || '';
     if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
@@ -535,6 +577,7 @@ export class Palette {
     
     return Math.min(filteredTags.length, 5);
   }
+  */
 
   /**
    * すべてのタグを取得
@@ -554,8 +597,9 @@ export class Palette {
   }
 
   /**
-   * タグを選択
+   * タグを選択（オートコンプリート機能に統一したため使用しない）
    */
+  /*
   private selectTag(tag: string): void {
     const currentValue = this.dom.inputEl!.value;
     const hashIndex = currentValue.indexOf('#');
@@ -568,8 +612,13 @@ export class Palette {
     }
     
     this.dom.inputEl!.focus();
-    this.renderList();
+    // 入力後にスペースを追加して検索できるようにする
+    setTimeout(() => {
+      this.dom.inputEl!.value += ' ';
+      this.renderList();
+    }, 0);
   }
+  */
 
   /**
    * 仮想スクロールをセットアップ

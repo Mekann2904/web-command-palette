@@ -19,6 +19,9 @@ export const themes: Themes = {
     '--command-badge-bg': 'rgba(255,255,255,0.12)',
     '--tag-bg': 'rgba(79,70,229,0.2)',
     '--tag-text': '#c7d2fe',
+    '--tag-suggestion-bg': 'rgba(79,70,229,0.1)',
+    '--autocomplete-bg': '#1f2937',
+    '--autocomplete-border': '#374151',
     '--toast-bg': 'rgba(17,24,39,0.92)',
     '--toast-text': '#e5e7eb'
   },
@@ -40,6 +43,9 @@ export const themes: Themes = {
     '--command-badge-bg': 'rgba(37,99,235,0.15)',
     '--tag-bg': 'rgba(37,99,235,0.12)',
     '--tag-text': '#1d4ed8',
+    '--tag-suggestion-bg': 'rgba(37,99,235,0.08)',
+    '--autocomplete-bg': '#ffffff',
+    '--autocomplete-border': '#d1d5db',
     '--toast-bg': 'rgba(255,255,255,0.95)',
     '--toast-text': '#111827'
   }

@@ -1,5 +1,5 @@
 import { DOMElements, AutocompleteState } from '@/core/state';
-import { getAllTags } from '@/utils/search';
+import { getAllTags, shouldShowTagSuggestions } from '@/utils/search';
 import { escapeHtml } from '@/utils/string';
 
 /**
@@ -30,11 +30,80 @@ export class Autocomplete {
     this.dom.autocompleteEl.className = 'autocomplete-list';
     this.dom.autocompleteEl.style.display = 'none';
     
+    // オートコンプリートのスタイルを追加
+    const style = document.createElement('style');
+    style.textContent = `
+      .autocomplete-container {
+        position: relative;
+        width: 100%;
+      }
+      .autocomplete-list {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--autocomplete-bg);
+        border: 1px solid var(--autocomplete-border);
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 2147483647;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        scrollbar-width: none;
+      }
+      .autocomplete-list::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+      .autocomplete-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        border-bottom: 1px solid var(--autocomplete-border);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: background 0.12s ease, transform 0.12s ease;
+      }
+      .autocomplete-item:first-child {
+        border-radius: 8px 8px 0 0;
+      }
+      .autocomplete-item:last-child {
+        border-bottom: none;
+        border-radius: 0 0 8px 8px;
+      }
+      .autocomplete-item:hover,
+      .autocomplete-item.active {
+        background: var(--item-active);
+        transform: translateX(2px);
+      }
+      .autocomplete-tag {
+        flex: 1;
+        color: var(--panel-text);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .autocomplete-count {
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--hint-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    `;
+    
     // 元の入力欄をコンテナに移動
     if (this.dom.inputEl && this.dom.inputEl.parentNode) {
       this.dom.inputEl.parentNode.replaceChild(container, this.dom.inputEl);
       container.appendChild(this.dom.inputEl);
       container.appendChild(this.dom.autocompleteEl);
+      
+      // スタイルをルート要素に追加
+      if (this.dom.root) {
+        this.dom.root.appendChild(style);
+      }
     }
 
     // オートコンプリートのイベントリスナーを追加
@@ -66,7 +135,8 @@ export class Autocomplete {
     const value = this.dom.inputEl!.value;
     
     setTimeout(() => {
-      if (value.includes('#')) {
+      // タグ候補を表示すべきか判定
+      if (shouldShowTagSuggestions(value)) {
         const hashIndex = value.indexOf('#');
         const afterHash = value.slice(hashIndex + 1);
         console.log('[CommandPalette] Autocomplete input - value:', value);
@@ -113,7 +183,11 @@ export class Autocomplete {
     entries.forEach(entry => {
       if (entry.tags) {
         entry.tags.forEach((tag: string) => {
-          tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+          // タグを正規化してカウント
+          const normalizedTag = tag.trim();
+          if (normalizedTag) {
+            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+          }
         });
       }
     });
@@ -134,7 +208,6 @@ export class Autocomplete {
       });
     } else {
       filteredTags = allTags.filter(tag => {
-        // 完全一致または部分一致
         const tagLower = tag.toLowerCase();
         const queryLower = query.toLowerCase();
         
@@ -146,16 +219,16 @@ export class Autocomplete {
           return true;
         }
         
-        // 部分一致
-        if (tagLower.includes(queryLower)) {
-          console.log(`[CommandPalette] Partial match: ${tag}`);
+        // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
+        const parts = tag.split('/');
+        if (parts.some(part => part.toLowerCase() === queryLower)) {
+          console.log(`[CommandPalette] Parent tag match: ${tag}`);
           return true;
         }
         
-        // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
-        const parts = tag.split('/');
-        if (parts.some(part => part.toLowerCase().includes(queryLower))) {
-          console.log(`[CommandPalette] Parent tag match: ${tag}`);
+        // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
+        if (tagLower.includes(queryLower)) {
+          console.log(`[CommandPalette] Partial match: ${tag}`);
           return true;
         }
         
@@ -170,10 +243,25 @@ export class Autocomplete {
       return a.localeCompare(b);
     });
     
-    const filteredTagObjects = filteredTags.map(tag => ({
-      name: tag,
-      count: tagCounts[tag] || 0
-    }));
+    const filteredTagObjects = filteredTags.map(tag => {
+      // 階層タグの場合、親タグと子タグの件数を合算
+      let count = tagCounts[tag] || 0;
+      
+      // 親タグの場合、子タグの件数も合算
+      if (!tag.includes('/')) {
+        // 親タグの場合、その親タグで始まるすべての子タグの件数を合算
+        Object.keys(tagCounts).forEach(childTag => {
+          if (childTag.startsWith(tag + '/')) {
+            count += tagCounts[childTag];
+          }
+        });
+      }
+      
+      return {
+        name: tag,
+        count: count
+      };
+    });
     
     if (filteredTagObjects.length === 0) {
       this.state.items = [];
@@ -225,14 +313,30 @@ export class Autocomplete {
       item.className = 'autocomplete-item';
       item.dataset.index = index.toString();
       
-      const depth = (tag.name.match(/\//g) || []).length;
-      const displayName = tag.name.split('/').pop();
-      const fullPath = tag.name;
+      const parts = tag.name.split('/');
+      const depth = parts.length - 1;
+      const displayName = parts.pop() || '';
+      const parentPath = parts.join('/');
+      
+      // 階層関係を視覚的に表現
+      let hierarchyDisplay = '';
+      if (depth > 0) {
+        // 親パスを表示
+        hierarchyDisplay = `<span style="color: var(--muted); font-size: 11px;">${escapeHtml(parentPath)}/</span>`;
+      }
       
       item.innerHTML = `
-        <span class="autocomplete-tag" style="margin-left: ${depth * 8}px">${escapeHtml(displayName || '')}</span>
+        <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
+          <span style="margin-left: ${depth * 12}px; color: var(--muted); font-size: 12px;">${depth > 0 ? '└─' : ''}</span>
+          <div style="display: flex; flex-direction: column; gap: 1px; flex: 1;">
+            <div style="display: flex; align-items: center; gap: 4px;">
+              ${hierarchyDisplay}
+              <span class="autocomplete-tag" style="font-weight: ${depth > 0 ? '400' : '500'};">${escapeHtml(displayName)}</span>
+            </div>
+            ${depth > 0 ? `<div style="font-size: 10px; color: var(--muted); margin-left: ${depth * 12 + 16}px;">フルパス: ${escapeHtml(tag.name)}</div>` : ''}
+          </div>
+        </div>
         <span class="autocomplete-count">${tag.count}件</span>
-        <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">${escapeHtml(fullPath)}</div>
       `;
       
       item.addEventListener('click', () => this.selectAutocompleteItem(tag));
@@ -287,9 +391,13 @@ export class Autocomplete {
     this.hideAutocomplete();
     this.dom.inputEl!.focus();
     
-    // アクティブインデックスをリセットして再レンダリング
-    this.onRenderList();
-    this.onUpdateActive();
+    // 入力後にスペースを追加して検索できるようにする
+    setTimeout(() => {
+      this.dom.inputEl!.value += ' ';
+      // アクティブインデックスをリセットして再レンダリング
+      this.onRenderList();
+      this.onUpdateActive();
+    }, 0);
   }
 
   /**
@@ -309,9 +417,13 @@ export class Autocomplete {
     this.hideAutocomplete();
     this.dom.inputEl!.focus();
     
-    // アクティブインデックスをリセットして再レンダリング
-    this.onRenderList();
-    this.onUpdateActive();
+    // 入力後にスペースを追加して検索できるようにする
+    setTimeout(() => {
+      this.dom.inputEl!.value += ' ';
+      // アクティブインデックスをリセットして再レンダリング
+      this.onRenderList();
+      this.onUpdateActive();
+    }, 0);
   }
 
   /**

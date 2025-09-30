@@ -26,6 +26,9 @@ export interface Theme {
   '--command-badge-bg': string;
   '--tag-bg': string;
   '--tag-text': string;
+  '--tag-suggestion-bg': string;
+  '--autocomplete-bg': string;
+  '--autocomplete-border': string;
   '--toast-bg': string;
   '--toast-text': string;
 }

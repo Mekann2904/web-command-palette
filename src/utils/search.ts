@@ -8,11 +8,41 @@ import { getSites } from '@/core/storage';
 export const extractTagFilter = (query: string): { tagFilter: string | null; textQuery: string } => {
   const trimmed = query.trim();
   if (!trimmed.startsWith('#')) return { tagFilter: null, textQuery: query };
-  const parts = trimmed.split(/\s+/);
-  const first = parts.shift();
-  if (!first) return { tagFilter: null, textQuery: query };
-  const tag = normalize(first.slice(1));
-  return { tagFilter: tag || null, textQuery: parts.join(' ') };
+  
+  // #タグ名 の形式を処理
+  const hashIndex = trimmed.indexOf('#');
+  const afterHash = trimmed.slice(hashIndex + 1);
+  
+  // #のみの場合はnullを返す
+  if (afterHash === '') {
+    return { tagFilter: null, textQuery: '' };
+  }
+  
+  // スペースでタグと検索語を分離
+  const spaceIndex = afterHash.indexOf(' ');
+  if (spaceIndex === -1) {
+    // #タグ名 のみの場合
+    const tag = normalize(afterHash);
+    return { tagFilter: tag || null, textQuery: '' };
+  } else {
+    // #タグ名 検索語 の場合
+    const tag = normalize(afterHash.slice(0, spaceIndex));
+    const textQuery = afterHash.slice(spaceIndex + 1).trim();
+    return { tagFilter: tag || null, textQuery };
+  }
+};
+
+/**
+ * タグ候補を表示すべきか判定する
+ */
+export const shouldShowTagSuggestions = (query: string): boolean => {
+  const trimmed = query.trim();
+  if (!trimmed.startsWith('#')) return false;
+  
+  // #タグ名 の形式で、まだスペースがない場合にタグ候補を表示
+  const hashIndex = trimmed.indexOf('#');
+  const afterHash = trimmed.slice(hashIndex + 1);
+  return !afterHash.includes(' ');
 };
 
 /**
@@ -97,6 +127,41 @@ export const scoreEntries = (entries: SiteEntry[], query: string, usageCache: Re
   filtered.sort((a,b) => b.score - a.score);
 
   return filtered;
+};
+
+/**
+ * タグでエントリをフィルタリングする
+ */
+export const filterEntriesByTag = (entries: SiteEntry[], tagFilter: string): SiteEntry[] => {
+  if (!tagFilter) return entries;
+  
+  const normalizedTagFilter = normalize(tagFilter);
+  return entries.filter(entry => {
+    if (!entry.tags || !Array.isArray(entry.tags)) return false;
+    
+    // 完全一致
+    if (entry.tags.some(tag => normalize(tag) === normalizedTagFilter)) {
+      return true;
+    }
+    
+    // 階層タグの一致チェック
+    return entry.tags.some(tag => {
+      const normalizedTag = normalize(tag);
+      
+      // 階層タグの親タグで一致（例: "ai/tools" は "ai" で一致）
+      const parts = tag.split('/');
+      if (parts.some(part => normalize(part) === normalizedTagFilter)) {
+        return true;
+      }
+      
+      // 階層タグの前方一致（例: "ai" で "ai/tools" に一致）
+      if (normalizedTag.startsWith(normalizedTagFilter + '/')) {
+        return true;
+      }
+      
+      return false;
+    });
+  });
 };
 
 /**

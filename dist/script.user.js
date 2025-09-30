@@ -95,6 +95,9 @@
             '--command-badge-bg': 'rgba(255,255,255,0.12)',
             '--tag-bg': 'rgba(79,70,229,0.2)',
             '--tag-text': '#c7d2fe',
+            '--tag-suggestion-bg': 'rgba(79,70,229,0.1)',
+            '--autocomplete-bg': '#1f2937',
+            '--autocomplete-border': '#374151',
             '--toast-bg': 'rgba(17,24,39,0.92)',
             '--toast-text': '#e5e7eb'
         },
@@ -116,6 +119,9 @@
             '--command-badge-bg': 'rgba(37,99,235,0.15)',
             '--tag-bg': 'rgba(37,99,235,0.12)',
             '--tag-text': '#1d4ed8',
+            '--tag-suggestion-bg': 'rgba(37,99,235,0.08)',
+            '--autocomplete-bg': '#ffffff',
+            '--autocomplete-border': '#d1d5db',
             '--toast-bg': 'rgba(255,255,255,0.95)',
             '--toast-text': '#111827'
         }
@@ -287,12 +293,38 @@
         const trimmed = query.trim();
         if (!trimmed.startsWith('#'))
             return { tagFilter: null, textQuery: query };
-        const parts = trimmed.split(/\s+/);
-        const first = parts.shift();
-        if (!first)
-            return { tagFilter: null, textQuery: query };
-        const tag = normalize(first.slice(1));
-        return { tagFilter: tag || null, textQuery: parts.join(' ') };
+        // #タグ名 の形式を処理
+        const hashIndex = trimmed.indexOf('#');
+        const afterHash = trimmed.slice(hashIndex + 1);
+        // #のみの場合はnullを返す
+        if (afterHash === '') {
+            return { tagFilter: null, textQuery: '' };
+        }
+        // スペースでタグと検索語を分離
+        const spaceIndex = afterHash.indexOf(' ');
+        if (spaceIndex === -1) {
+            // #タグ名 のみの場合
+            const tag = normalize(afterHash);
+            return { tagFilter: tag || null, textQuery: '' };
+        }
+        else {
+            // #タグ名 検索語 の場合
+            const tag = normalize(afterHash.slice(0, spaceIndex));
+            const textQuery = afterHash.slice(spaceIndex + 1).trim();
+            return { tagFilter: tag || null, textQuery };
+        }
+    };
+    /**
+     * タグ候補を表示すべきか判定する
+     */
+    const shouldShowTagSuggestions = (query) => {
+        const trimmed = query.trim();
+        if (!trimmed.startsWith('#'))
+            return false;
+        // #タグ名 の形式で、まだスペースがない場合にタグ候補を表示
+        const hashIndex = trimmed.indexOf('#');
+        const afterHash = trimmed.slice(hashIndex + 1);
+        return !afterHash.includes(' ');
     };
     /**
      * すべてのタグを取得する
@@ -368,6 +400,36 @@
         const filtered = base.filter(item => item.score > -Infinity);
         filtered.sort((a, b) => b.score - a.score);
         return filtered;
+    };
+    /**
+     * タグでエントリをフィルタリングする
+     */
+    const filterEntriesByTag = (entries, tagFilter) => {
+        if (!tagFilter)
+            return entries;
+        const normalizedTagFilter = normalize(tagFilter);
+        return entries.filter(entry => {
+            if (!entry.tags || !Array.isArray(entry.tags))
+                return false;
+            // 完全一致
+            if (entry.tags.some(tag => normalize(tag) === normalizedTagFilter)) {
+                return true;
+            }
+            // 階層タグの一致チェック
+            return entry.tags.some(tag => {
+                const normalizedTag = normalize(tag);
+                // 階層タグの親タグで一致（例: "ai/tools" は "ai" で一致）
+                const parts = tag.split('/');
+                if (parts.some(part => normalize(part) === normalizedTagFilter)) {
+                    return true;
+                }
+                // 階層タグの前方一致（例: "ai" で "ai/tools" に一致）
+                if (normalizedTag.startsWith(normalizedTagFilter + '/')) {
+                    return true;
+                }
+                return false;
+            });
+        });
     };
     /**
      * ファジーマッチャーを作成する
@@ -1028,14 +1090,63 @@
         }
 
         /* タグ候補 */
-        .tag-suggestion { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; background: var(--tag-suggestion-bg); border-bottom: 1px solid var(--border-color); }
-        .tag-suggestion:hover, .tag-suggestion.active { background: var(--item-active); transform: translateX(2px); }
-        .tag-suggestion .tag-icon { width: 18px; height: 18px; border-radius: 4px; background: var(--accent-color); color: white; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
-        .tag-suggestion .tag-info { display: flex; flex-direction: column; gap: 2px; }
-        .tag-suggestion .tag-name { font-size: 14px; font-weight: 500; }
-        .tag-suggestion .tag-path { font-size: 11px; color: var(--muted); }
-        .tag-suggestion .tag-count { font-size: 12px; color: var(--muted); }
-        .tag-suggestion .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
+        .tag-suggestion {
+          display: grid;
+          grid-template-columns: 28px 1fr auto;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 14px;
+          cursor: pointer;
+          transition: background 0.12s ease, transform 0.12s ease;
+          background: var(--tag-suggestion-bg);
+          border-bottom: 1px solid var(--border-color);
+          border-radius: 0;
+        }
+        .tag-suggestion:first-child { border-radius: 8px 8px 0 0; }
+        .tag-suggestion:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
+        .tag-suggestion:hover, .tag-suggestion.active {
+          background: var(--item-active);
+          transform: translateX(2px);
+        }
+        .tag-suggestion .tag-icon {
+          width: 18px;
+          height: 18px;
+          border-radius: 4px;
+          background: var(--accent-color);
+          color: white;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 12px;
+          font-weight: bold;
+        }
+        .tag-suggestion .tag-info {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .tag-suggestion .tag-name {
+          font-size: 14px;
+          font-weight: 500;
+          color: var(--panel-text);
+        }
+        .tag-suggestion .tag-path {
+          font-size: 11px;
+          color: var(--muted);
+        }
+        .tag-suggestion .tag-count {
+          font-size: 12px;
+          color: var(--muted);
+        }
+        .tag-suggestion .kbd {
+          display: inline-block;
+          padding: 2px 6px;
+          border-radius: 6px;
+          background: var(--hint-bg);
+          border: 1px solid var(--border-color);
+          font-size: 12px;
+          color: var(--input-text);
+        }
       `;
                 if (this.dom.root) {
                     this.dom.root.appendChild(managerStyle);
@@ -1062,10 +1173,11 @@
             const rawQuery = this.dom.inputEl?.value || '';
             const { tagFilter, textQuery } = extractTagFilter(rawQuery);
             const entries = this.getEntries();
-            const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => normalize(t) === tagFilter)) : entries;
+            // タグフィルタを適用
+            const filtered = tagFilter ? filterEntriesByTag(entries, tagFilter) : entries;
             const scored = filterAndScoreEntries(filtered, textQuery, this.getUsageCache());
             // タグ候補を表示するか判定
-            const shouldShowTagSuggestions = rawQuery.includes('#') && !rawQuery.includes(' ');
+            const showTagSuggestions = shouldShowTagSuggestions(rawQuery);
             if (scored.length) {
                 if (this.state.activeIndex >= scored.length)
                     this.state.activeIndex = scored.length - 1;
@@ -1079,10 +1191,10 @@
             const useVirtualScroll = scored.length >= this.VIRTUAL_SCROLL_THRESHOLD;
             const hasQuery = !!(textQuery || tagFilter);
             if (useVirtualScroll) {
-                this.renderVirtualList(scored, hasQuery, shouldShowTagSuggestions);
+                this.renderVirtualList(scored, hasQuery, showTagSuggestions);
             }
             else {
-                this.renderNormalList(scored, hasQuery, shouldShowTagSuggestions);
+                this.renderNormalList(scored, hasQuery, showTagSuggestions);
             }
             this.state.currentItems = scored;
             this.updateActive();
@@ -1090,7 +1202,7 @@
         /**
          * 仮想スクロールを使用してリストをレンダリング
          */
-        renderVirtualList(scored, hasQuery, shouldShowTagSuggestions = false) {
+        renderVirtualList(scored, hasQuery, showTagSuggestions = false) {
             if (!this.dom.listEl)
                 return;
             // 仮想スクロールコンテナを初期化
@@ -1098,6 +1210,7 @@
                 this.setupVirtualScroll();
             }
             // 仮想スクロール用のアイテムデータに変換
+            // タグ候補はオートコンプリート機能に任せるため、ここでは考慮しない
             const virtualItems = scored.map((entry, index) => ({
                 id: entry.id,
                 data: { entry, index }
@@ -1122,24 +1235,13 @@
         /**
          * 通常のリストをレンダリング
          */
-        renderNormalList(scored, hasQuery, shouldShowTagSuggestions = false) {
+        renderNormalList(scored, hasQuery, showTagSuggestions = false) {
             if (!this.dom.listEl)
                 return;
             this.dom.listEl.innerHTML = '';
-            // タグ候補を表示
-            if (shouldShowTagSuggestions) {
-                const tagSuggestions = this.createTagSuggestions();
-                tagSuggestions.forEach((suggestion, idx) => {
-                    suggestion.style.opacity = '0';
-                    suggestion.style.transform = 'translateY(10px)';
-                    // アニメーションを適用
-                    setTimeout(() => {
-                        scaleIn(suggestion, 120);
-                    }, idx * 30);
-                    this.dom.listEl.appendChild(suggestion);
-                });
-            }
-            if (!scored.length && !shouldShowTagSuggestions) {
+            // タグ候補はオートコンプリート機能に任せるため、ここでは表示しない
+            // showTagSuggestions パラメータは互換性のために残す
+            if (!scored.length) {
                 const empty = document.createElement('div');
                 empty.className = 'empty';
                 empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
@@ -1148,150 +1250,174 @@
             }
             // アイテムをアニメーション付きで追加
             scored.forEach((entry, idx) => {
-                const item = this.createListItem(entry, idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0));
+                const item = this.createListItem(entry, idx);
                 item.style.opacity = '0';
                 item.style.transform = 'translateY(10px)';
                 // アニメーションを適用
                 setTimeout(() => {
                     scaleIn(item, 120);
-                }, (idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0)) * 30);
+                }, idx * 30);
                 this.dom.listEl.appendChild(item);
             });
         }
         /**
-         * タグ候補を作成
+         * タグ候補を作成（オートコンプリート機能に統一したため使用しない）
          */
-        createTagSuggestions() {
-            const rawQuery = this.dom.inputEl?.value || '';
-            const { tagFilter, textQuery } = extractTagFilter(rawQuery);
-            if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
-                return [];
+        /*
+        private createTagSuggestions(): HTMLElement[] {
+          const rawQuery = this.dom.inputEl?.value || '';
+          const { tagFilter, textQuery } = extractTagFilter(rawQuery);
+          
+          if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
+            return [];
+          }
+      
+          const entries = this.getEntries();
+          const allTags = this.getAllTags(entries);
+          
+          const tagCounts: Record<string, number> = {};
+          entries.forEach(entry => {
+            if (entry.tags) {
+              entry.tags.forEach((tag: string) => {
+                tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+              });
             }
-            const entries = this.getEntries();
-            const allTags = this.getAllTags(entries);
-            const tagCounts = {};
-            entries.forEach(entry => {
-                if (entry.tags) {
-                    entry.tags.forEach((tag) => {
-                        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-                    });
-                }
+          });
+      
+          const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
+          let filteredTags = [];
+      
+          if (afterHash.includes('/')) {
+            const parts = afterHash.split('/');
+            const parentQuery = parts.slice(0, -1).join('/');
+            const childQuery = parts[parts.length - 1];
+            
+            filteredTags = allTags.filter(tag => {
+              if (tag.startsWith(parentQuery + '/')) {
+                const childPart = tag.slice(parentQuery.length + 1);
+                return childPart.toLowerCase().includes(childQuery.toLowerCase());
+              }
+              return false;
             });
-            const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
-            let filteredTags = [];
-            if (afterHash.includes('/')) {
-                const parts = afterHash.split('/');
-                const parentQuery = parts.slice(0, -1).join('/');
-                const childQuery = parts[parts.length - 1];
-                filteredTags = allTags.filter(tag => {
-                    if (tag.startsWith(parentQuery + '/')) {
-                        const childPart = tag.slice(parentQuery.length + 1);
-                        return childPart.toLowerCase().includes(childQuery.toLowerCase());
-                    }
-                    return false;
-                });
-            }
-            else {
-                filteredTags = allTags.filter(tag => {
-                    const tagLower = tag.toLowerCase();
-                    const queryLower = afterHash.toLowerCase();
-                    if (tagLower === queryLower)
-                        return true;
-                    if (tagLower.includes(queryLower))
-                        return true;
-                    const parts = tag.split('/');
-                    if (parts.some(part => part.toLowerCase().includes(queryLower)))
-                        return true;
-                    return false;
-                });
-            }
-            filteredTags.sort((a, b) => {
-                const aDepth = (a.match(/\//g) || []).length;
-                const bDepth = (b.match(/\//g) || []).length;
-                if (aDepth !== bDepth)
-                    return aDepth - bDepth;
-                return a.localeCompare(b);
+          } else {
+            filteredTags = allTags.filter(tag => {
+              const tagLower = tag.toLowerCase();
+              const queryLower = afterHash.toLowerCase();
+              
+              if (tagLower === queryLower) return true;
+              if (tagLower.includes(queryLower)) return true;
+              
+              const parts = tag.split('/');
+              if (parts.some(part => part.toLowerCase().includes(queryLower))) return true;
+              
+              return false;
             });
-            return filteredTags.slice(0, 5).map((tag, index) => {
-                const suggestion = document.createElement('div');
-                suggestion.className = 'tag-suggestion';
-                suggestion.dataset.index = index.toString();
-                suggestion.dataset.tag = tag;
-                const tagIcon = document.createElement('div');
-                tagIcon.className = 'tag-icon';
-                tagIcon.textContent = '#';
-                const tagInfo = document.createElement('div');
-                tagInfo.className = 'tag-info';
-                const tagName = document.createElement('div');
-                tagName.className = 'tag-name';
-                const displayName = tag.split('/').pop();
-                tagName.textContent = displayName || tag;
-                const tagPath = document.createElement('div');
-                tagPath.className = 'tag-path';
-                tagPath.textContent = tag;
-                tagInfo.appendChild(tagName);
-                tagInfo.appendChild(tagPath);
-                const tagCount = document.createElement('div');
-                tagCount.className = 'tag-count';
-                tagCount.textContent = `${tagCounts[tag] || 0}件`;
-                const kbd = document.createElement('span');
-                kbd.className = 'kbd';
-                kbd.textContent = '↵';
-                suggestion.appendChild(tagIcon);
-                suggestion.appendChild(tagInfo);
-                suggestion.appendChild(tagCount);
-                suggestion.appendChild(kbd);
-                suggestion.addEventListener('mouseenter', () => {
-                    this.state.activeIndex = index;
-                    this.updateActive();
-                });
-                suggestion.addEventListener('mousedown', e => e.preventDefault());
-                suggestion.addEventListener('click', () => {
-                    this.selectTag(tag);
-                });
-                return suggestion;
+          }
+      
+          filteredTags.sort((a, b) => {
+            const aDepth = (a.match(/\//g) || []).length;
+            const bDepth = (b.match(/\//g) || []).length;
+            if (aDepth !== bDepth) return aDepth - bDepth;
+            return a.localeCompare(b);
+          });
+      
+          return filteredTags.slice(0, 5).map((tag, index) => {
+            const suggestion = document.createElement('div');
+            suggestion.className = 'tag-suggestion';
+            suggestion.dataset.index = index.toString();
+            suggestion.dataset.tag = tag;
+            
+            const tagIcon = document.createElement('div');
+            tagIcon.className = 'tag-icon';
+            tagIcon.textContent = '#';
+            
+            const tagInfo = document.createElement('div');
+            tagInfo.className = 'tag-info';
+            
+            const tagName = document.createElement('div');
+            tagName.className = 'tag-name';
+            const displayName = tag.split('/').pop();
+            tagName.textContent = displayName || tag;
+            
+            const tagPath = document.createElement('div');
+            tagPath.className = 'tag-path';
+            tagPath.textContent = tag;
+            
+            tagInfo.appendChild(tagName);
+            tagInfo.appendChild(tagPath);
+            
+            const tagCount = document.createElement('div');
+            tagCount.className = 'tag-count';
+            tagCount.textContent = `${tagCounts[tag] || 0}件`;
+            
+            const kbd = document.createElement('span');
+            kbd.className = 'kbd';
+            kbd.textContent = '↵';
+            
+            suggestion.appendChild(tagIcon);
+            suggestion.appendChild(tagInfo);
+            suggestion.appendChild(tagCount);
+            suggestion.appendChild(kbd);
+            
+            suggestion.addEventListener('mouseenter', () => {
+              this.state.activeIndex = index;
+              this.updateActive();
             });
+            
+            suggestion.addEventListener('mousedown', e => e.preventDefault());
+            suggestion.addEventListener('click', () => {
+              this.selectTag(tag);
+            });
+      
+            return suggestion;
+          });
         }
+        */
         /**
-         * タグ候補数を取得
+         * タグ候補数を取得（オートコンプリート機能に統一したため使用しない）
          */
-        getTagSuggestionsCount() {
-            const rawQuery = this.dom.inputEl?.value || '';
-            if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
-                return 0;
-            }
-            const entries = this.getEntries();
-            const allTags = this.getAllTags(entries);
-            const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
-            let filteredTags = [];
-            if (afterHash.includes('/')) {
-                const parts = afterHash.split('/');
-                const parentQuery = parts.slice(0, -1).join('/');
-                const childQuery = parts[parts.length - 1];
-                filteredTags = allTags.filter(tag => {
-                    if (tag.startsWith(parentQuery + '/')) {
-                        const childPart = tag.slice(parentQuery.length + 1);
-                        return childPart.toLowerCase().includes(childQuery.toLowerCase());
-                    }
-                    return false;
-                });
-            }
-            else {
-                filteredTags = allTags.filter(tag => {
-                    const tagLower = tag.toLowerCase();
-                    const queryLower = afterHash.toLowerCase();
-                    if (tagLower === queryLower)
-                        return true;
-                    if (tagLower.includes(queryLower))
-                        return true;
-                    const parts = tag.split('/');
-                    if (parts.some(part => part.toLowerCase().includes(queryLower)))
-                        return true;
-                    return false;
-                });
-            }
-            return Math.min(filteredTags.length, 5);
+        /*
+        private getTagSuggestionsCount(): number {
+          const rawQuery = this.dom.inputEl?.value || '';
+          if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
+            return 0;
+          }
+          
+          const entries = this.getEntries();
+          const allTags = this.getAllTags(entries);
+          const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
+          
+          let filteredTags = [];
+          if (afterHash.includes('/')) {
+            const parts = afterHash.split('/');
+            const parentQuery = parts.slice(0, -1).join('/');
+            const childQuery = parts[parts.length - 1];
+            
+            filteredTags = allTags.filter(tag => {
+              if (tag.startsWith(parentQuery + '/')) {
+                const childPart = tag.slice(parentQuery.length + 1);
+                return childPart.toLowerCase().includes(childQuery.toLowerCase());
+              }
+              return false;
+            });
+          } else {
+            filteredTags = allTags.filter(tag => {
+              const tagLower = tag.toLowerCase();
+              const queryLower = afterHash.toLowerCase();
+              
+              if (tagLower === queryLower) return true;
+              if (tagLower.includes(queryLower)) return true;
+              
+              const parts = tag.split('/');
+              if (parts.some(part => part.toLowerCase().includes(queryLower))) return true;
+              
+              return false;
+            });
+          }
+          
+          return Math.min(filteredTags.length, 5);
         }
+        */
         /**
          * すべてのタグを取得
          */
@@ -1309,21 +1435,28 @@
             return Array.from(tagSet).sort();
         }
         /**
-         * タグを選択
+         * タグを選択（オートコンプリート機能に統一したため使用しない）
          */
-        selectTag(tag) {
-            const currentValue = this.dom.inputEl.value;
-            const hashIndex = currentValue.indexOf('#');
-            if (hashIndex >= 0) {
-                const beforeHash = currentValue.slice(0, hashIndex);
-                this.dom.inputEl.value = beforeHash + '#' + tag;
-            }
-            else {
-                this.dom.inputEl.value = '#' + tag;
-            }
-            this.dom.inputEl.focus();
+        /*
+        private selectTag(tag: string): void {
+          const currentValue = this.dom.inputEl!.value;
+          const hashIndex = currentValue.indexOf('#');
+          
+          if (hashIndex >= 0) {
+            const beforeHash = currentValue.slice(0, hashIndex);
+            this.dom.inputEl!.value = beforeHash + '#' + tag;
+          } else {
+            this.dom.inputEl!.value = '#' + tag;
+          }
+          
+          this.dom.inputEl!.focus();
+          // 入力後にスペースを追加して検索できるようにする
+          setTimeout(() => {
+            this.dom.inputEl!.value += ' ';
             this.renderList();
+          }, 0);
         }
+        */
         /**
          * 仮想スクロールをセットアップ
          */
@@ -1458,7 +1591,8 @@
             this.handleAutocompleteInput = () => {
                 const value = this.dom.inputEl.value;
                 setTimeout(() => {
-                    if (value.includes('#')) {
+                    // タグ候補を表示すべきか判定
+                    if (shouldShowTagSuggestions(value)) {
                         const hashIndex = value.indexOf('#');
                         const afterHash = value.slice(hashIndex + 1);
                         console.log('[CommandPalette] Autocomplete input - value:', value);
@@ -1509,11 +1643,78 @@
             this.dom.autocompleteEl = document.createElement('div');
             this.dom.autocompleteEl.className = 'autocomplete-list';
             this.dom.autocompleteEl.style.display = 'none';
+            // オートコンプリートのスタイルを追加
+            const style = document.createElement('style');
+            style.textContent = `
+      .autocomplete-container {
+        position: relative;
+        width: 100%;
+      }
+      .autocomplete-list {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--autocomplete-bg);
+        border: 1px solid var(--autocomplete-border);
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+        max-height: 200px;
+        overflow-y: auto;
+        z-index: 2147483647;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        scrollbar-width: none;
+      }
+      .autocomplete-list::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+      }
+      .autocomplete-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 14px;
+        border-bottom: 1px solid var(--autocomplete-border);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        transition: background 0.12s ease, transform 0.12s ease;
+      }
+      .autocomplete-item:first-child {
+        border-radius: 8px 8px 0 0;
+      }
+      .autocomplete-item:last-child {
+        border-bottom: none;
+        border-radius: 0 0 8px 8px;
+      }
+      .autocomplete-item:hover,
+      .autocomplete-item.active {
+        background: var(--item-active);
+        transform: translateX(2px);
+      }
+      .autocomplete-tag {
+        flex: 1;
+        color: var(--panel-text);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .autocomplete-count {
+        font-size: 12px;
+        color: var(--muted);
+        background: var(--hint-bg);
+        padding: 2px 6px;
+        border-radius: 4px;
+      }
+    `;
             // 元の入力欄をコンテナに移動
             if (this.dom.inputEl && this.dom.inputEl.parentNode) {
                 this.dom.inputEl.parentNode.replaceChild(container, this.dom.inputEl);
                 container.appendChild(this.dom.inputEl);
                 container.appendChild(this.dom.autocompleteEl);
+                // スタイルをルート要素に追加
+                if (this.dom.root) {
+                    this.dom.root.appendChild(style);
+                }
             }
             // オートコンプリートのイベントリスナーを追加
             this.dom.inputEl.addEventListener('input', this.handleAutocompleteInput);
@@ -1546,7 +1747,11 @@
             entries.forEach(entry => {
                 if (entry.tags) {
                     entry.tags.forEach((tag) => {
-                        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+                        // タグを正規化してカウント
+                        const normalizedTag = tag.trim();
+                        if (normalizedTag) {
+                            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+                        }
                     });
                 }
             });
@@ -1565,7 +1770,6 @@
             }
             else {
                 filteredTags = allTags.filter(tag => {
-                    // 完全一致または部分一致
                     const tagLower = tag.toLowerCase();
                     const queryLower = query.toLowerCase();
                     console.log(`[CommandPalette] Filtering tag "${tag}" against query "${query}"`);
@@ -1574,15 +1778,15 @@
                         console.log(`[CommandPalette] Exact match: ${tag}`);
                         return true;
                     }
-                    // 部分一致
-                    if (tagLower.includes(queryLower)) {
-                        console.log(`[CommandPalette] Partial match: ${tag}`);
-                        return true;
-                    }
                     // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
                     const parts = tag.split('/');
-                    if (parts.some(part => part.toLowerCase().includes(queryLower))) {
+                    if (parts.some(part => part.toLowerCase() === queryLower)) {
                         console.log(`[CommandPalette] Parent tag match: ${tag}`);
+                        return true;
+                    }
+                    // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
+                    if (tagLower.includes(queryLower)) {
+                        console.log(`[CommandPalette] Partial match: ${tag}`);
                         return true;
                     }
                     return false;
@@ -1595,10 +1799,23 @@
                     return aDepth - bDepth;
                 return a.localeCompare(b);
             });
-            const filteredTagObjects = filteredTags.map(tag => ({
-                name: tag,
-                count: tagCounts[tag] || 0
-            }));
+            const filteredTagObjects = filteredTags.map(tag => {
+                // 階層タグの場合、親タグと子タグの件数を合算
+                let count = tagCounts[tag] || 0;
+                // 親タグの場合、子タグの件数も合算
+                if (!tag.includes('/')) {
+                    // 親タグの場合、その親タグで始まるすべての子タグの件数を合算
+                    Object.keys(tagCounts).forEach(childTag => {
+                        if (childTag.startsWith(tag + '/')) {
+                            count += tagCounts[childTag];
+                        }
+                    });
+                }
+                return {
+                    name: tag,
+                    count: count
+                };
+            });
             if (filteredTagObjects.length === 0) {
                 this.state.items = [];
                 this.state.index = -1;
@@ -1642,13 +1859,28 @@
                 const item = document.createElement('div');
                 item.className = 'autocomplete-item';
                 item.dataset.index = index.toString();
-                const depth = (tag.name.match(/\//g) || []).length;
-                const displayName = tag.name.split('/').pop();
-                const fullPath = tag.name;
+                const parts = tag.name.split('/');
+                const depth = parts.length - 1;
+                const displayName = parts.pop() || '';
+                const parentPath = parts.join('/');
+                // 階層関係を視覚的に表現
+                let hierarchyDisplay = '';
+                if (depth > 0) {
+                    // 親パスを表示
+                    hierarchyDisplay = `<span style="color: var(--muted); font-size: 11px;">${escapeHtml(parentPath)}/</span>`;
+                }
                 item.innerHTML = `
-        <span class="autocomplete-tag" style="margin-left: ${depth * 8}px">${escapeHtml(displayName || '')}</span>
+        <div style="display: flex; align-items: center; gap: 4px; flex: 1;">
+          <span style="margin-left: ${depth * 12}px; color: var(--muted); font-size: 12px;">${depth > 0 ? '└─' : ''}</span>
+          <div style="display: flex; flex-direction: column; gap: 1px; flex: 1;">
+            <div style="display: flex; align-items: center; gap: 4px;">
+              ${hierarchyDisplay}
+              <span class="autocomplete-tag" style="font-weight: ${depth > 0 ? '400' : '500'};">${escapeHtml(displayName)}</span>
+            </div>
+            ${depth > 0 ? `<div style="font-size: 10px; color: var(--muted); margin-left: ${depth * 12 + 16}px;">フルパス: ${escapeHtml(tag.name)}</div>` : ''}
+          </div>
+        </div>
         <span class="autocomplete-count">${tag.count}件</span>
-        <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">${escapeHtml(fullPath)}</div>
       `;
                 item.addEventListener('click', () => this.selectAutocompleteItem(tag));
                 item.addEventListener('mouseenter', () => {
@@ -1696,9 +1928,13 @@
             }
             this.hideAutocomplete();
             this.dom.inputEl.focus();
-            // アクティブインデックスをリセットして再レンダリング
-            this.onRenderList();
-            this.onUpdateActive();
+            // 入力後にスペースを追加して検索できるようにする
+            setTimeout(() => {
+                this.dom.inputEl.value += ' ';
+                // アクティブインデックスをリセットして再レンダリング
+                this.onRenderList();
+                this.onUpdateActive();
+            }, 0);
         }
         /**
          * 新規タグを作成
@@ -1715,9 +1951,13 @@
             }
             this.hideAutocomplete();
             this.dom.inputEl.focus();
-            // アクティブインデックスをリセットして再レンダリング
-            this.onRenderList();
-            this.onUpdateActive();
+            // 入力後にスペースを追加して検索できるようにする
+            setTimeout(() => {
+                this.dom.inputEl.value += ' ';
+                // アクティブインデックスをリセットして再レンダリング
+                this.onRenderList();
+                this.onUpdateActive();
+            }, 0);
         }
         /**
          * エントリを取得する（正規化済み）
