@@ -587,10 +587,267 @@
     }
 
     /**
+     * アニメーションユーティリティ関数
+     */
+    /**
+     * CSSトランジションを適用する
+     */
+    function applyTransition(element, properties, duration = 200, easing = 'ease') {
+        return new Promise(resolve => {
+            // すでにトランジション中の場合は待機
+            if (getComputedStyle(element).transitionProperty !== 'none') {
+                const handler = () => {
+                    element.removeEventListener('transitionend', handler);
+                    resolve();
+                };
+                element.addEventListener('transitionend', handler);
+                return;
+            }
+            // トランジションを適用
+            const originalTransition = element.style.transition;
+            // 現在の値を保存
+            Object.keys(properties).forEach(prop => {
+                element.style.getPropertyValue(prop);
+            });
+            // トランジションを設定
+            element.style.transition = `all ${duration}ms ${easing}`;
+            // 適用後のハンドラ
+            const handler = () => {
+                element.removeEventListener('transitionend', handler);
+                element.style.transition = originalTransition;
+                resolve();
+            };
+            element.addEventListener('transitionend', handler);
+            // プロパティを適用
+            requestAnimationFrame(() => {
+                Object.entries(properties).forEach(([prop, value]) => {
+                    element.style.setProperty(prop, value);
+                });
+            });
+        });
+    }
+    /**
+     * フェードインアニメーション
+     */
+    function fadeIn(element, duration = 200) {
+        element.style.opacity = '0';
+        element.style.display = '';
+        return applyTransition(element, { opacity: '1' }, duration);
+    }
+    /**
+     * スライドインアニメーション（上から）
+     */
+    function slideInFromTop(element, duration = 200) {
+        const originalTransform = element.style.transform;
+        element.style.transform = 'translateY(-20px)';
+        element.style.opacity = '0';
+        element.style.display = '';
+        return applyTransition(element, {
+            transform: originalTransform || 'translateY(0)',
+            opacity: '1'
+        }, duration);
+    }
+    /**
+     * スケールインアニメーション
+     */
+    function scaleIn(element, duration = 200) {
+        element.style.transform = 'scale(0.9)';
+        element.style.opacity = '0';
+        element.style.display = '';
+        return applyTransition(element, {
+            transform: 'scale(1)',
+            opacity: '1'
+        }, duration);
+    }
+
+    /**
+     * 仮想スクロール用のユーティリティ
+     * 大量のアイテムを効率的に表示するための仮想スクロール機能を提供
+     */
+    /**
+     * 仮想スクロールを管理するクラス
+     */
+    class VirtualScrollManager {
+        constructor(options) {
+            this.items = [];
+            this.itemHeights = new Map();
+            this.itemPositions = [];
+            this.totalHeight = 0;
+            this.containerHeight = options.containerHeight;
+            this.itemHeight = options.itemHeight || 40;
+            this.overscan = options.overscan || 5;
+            this.estimatedItemHeight = options.estimatedItemHeight || options.itemHeight || 40;
+        }
+        /**
+         * アイテムリストを設定
+         */
+        setItems(items) {
+            this.items = items;
+            this.recalculatePositions();
+        }
+        /**
+         * アイテムの高さを更新
+         */
+        updateItemHeight(itemId, height) {
+            const oldHeight = this.itemHeights.get(itemId) || this.estimatedItemHeight;
+            this.itemHeights.set(itemId, height);
+            if (Math.abs(oldHeight - height) > 1) {
+                this.recalculatePositions();
+            }
+        }
+        /**
+         * アイテムの位置を再計算
+         */
+        recalculatePositions() {
+            this.itemPositions = [0];
+            let currentY = 0;
+            for (let i = 0; i < this.items.length; i++) {
+                const item = this.items[i];
+                const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
+                currentY += height;
+                this.itemPositions.push(currentY);
+            }
+            this.totalHeight = currentY;
+        }
+        /**
+         * スクロール位置に基づいて表示範囲を計算
+         */
+        getVisibleRange(scrollTop) {
+            let startIndex = 0;
+            let endIndex = 0;
+            // バイナリサーチで開始位置を特定
+            for (let i = 0; i < this.itemPositions.length - 1; i++) {
+                if (this.itemPositions[i] <= scrollTop && this.itemPositions[i + 1] > scrollTop) {
+                    startIndex = Math.max(0, i - this.overscan);
+                    break;
+                }
+            }
+            // 終了位置を計算
+            for (let i = startIndex; i < this.itemPositions.length - 1; i++) {
+                if (this.itemPositions[i] < scrollTop + this.containerHeight) {
+                    endIndex = i;
+                }
+                else {
+                    break;
+                }
+            }
+            endIndex = Math.min(this.items.length - 1, endIndex + this.overscan);
+            return {
+                scrollTop,
+                startIndex,
+                endIndex,
+                offsetY: this.itemPositions[startIndex] || 0
+            };
+        }
+        /**
+         * 表示すべきアイテムを取得
+         */
+        getVisibleItems(scrollTop) {
+            const position = this.getVisibleRange(scrollTop);
+            const visibleItems = [];
+            for (let i = position.startIndex; i <= position.endIndex; i++) {
+                if (i < this.items.length) {
+                    const item = this.items[i];
+                    const top = this.itemPositions[i];
+                    const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
+                    visibleItems.push({
+                        item,
+                        index: i,
+                        style: {
+                            position: 'absolute',
+                            top: `${top}px`,
+                            left: '0',
+                            right: '0',
+                            height: `${height}px`,
+                            zIndex: i
+                        }
+                    });
+                }
+            }
+            return visibleItems;
+        }
+        /**
+         * 総高さを取得
+         */
+        getTotalHeight() {
+            return this.totalHeight;
+        }
+        /**
+         * アイテム数を取得
+         */
+        getItemCount() {
+            return this.items.length;
+        }
+        /**
+         * 指定されたインデックスのアイテムを取得
+         */
+        getItemAtIndex(index) {
+            return index >= 0 && index < this.items.length ? this.items[index] : null;
+        }
+        /**
+         * 指定されたアイテムのインデックスを取得
+         */
+        getItemIndex(itemId) {
+            return this.items.findIndex(item => item.id === itemId);
+        }
+        /**
+         * スクロールしてアイテムを表示
+         */
+        scrollToItem(itemId, container, alignment = 'start') {
+            const index = this.getItemIndex(itemId);
+            if (index === -1)
+                return;
+            const itemTop = this.itemPositions[index];
+            const itemHeight = this.itemHeights.get(itemId) || this.estimatedItemHeight;
+            const itemBottom = itemTop + itemHeight;
+            let scrollTop;
+            switch (alignment) {
+                case 'start':
+                    scrollTop = itemTop;
+                    break;
+                case 'center':
+                    scrollTop = itemTop - (this.containerHeight - itemHeight) / 2;
+                    break;
+                case 'end':
+                    scrollTop = itemBottom - this.containerHeight;
+                    break;
+            }
+            scrollTop = Math.max(0, Math.min(scrollTop, this.totalHeight - this.containerHeight));
+            container.scrollTop = scrollTop;
+        }
+    }
+    /**
+     * 仮想スクロールコンテナを作成するヘルパー関数
+     */
+    function createVirtualScrollContainer(options) {
+        const container = document.createElement('div');
+        container.style.height = `${options.containerHeight}px`;
+        container.style.overflow = 'auto';
+        container.style.position = 'relative';
+        const content = document.createElement('div');
+        content.style.position = 'relative';
+        content.style.width = '100%';
+        const manager = new VirtualScrollManager({
+            containerHeight: options.containerHeight,
+            itemHeight: options.itemHeight
+        });
+        container.addEventListener('scroll', () => {
+            const position = manager.getVisibleRange(container.scrollTop);
+            options.onScroll?.(position);
+        });
+        container.appendChild(content);
+        return { container, content, manager };
+    }
+
+    /**
      * メインパレットUIを管理するクラス
      */
     class Palette {
         constructor(state, dom) {
+            this.virtualScrollManager = null;
+            this.virtualScrollContainer = null;
+            this.virtualScrollContent = null;
+            this.VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
             this.state = state;
             this.dom = dom;
             // デバウンスされたレンダリング関数を作成
@@ -611,7 +868,7 @@
         /**
          * パレットを開く
          */
-        openPalette() {
+        async openPalette() {
             this.ensureRoot();
             this.state.cachedSettings = getSettings();
             this.applyTheme();
@@ -620,9 +877,9 @@
                 this.createPaletteUI();
             }
             this.dom.overlayEl.style.display = 'block';
-            requestAnimationFrame(() => {
-                this.dom.overlayEl.classList.add('visible');
-            });
+            // アニメーションを適用
+            await fadeIn(this.dom.overlayEl, 160);
+            await slideInFromTop(this.dom.overlayEl.querySelector('.panel'), 200);
             this.dom.inputEl.value = '';
             this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
             this.state.activeIndex = 0;
@@ -793,63 +1050,162 @@
             else {
                 this.state.activeIndex = 0;
             }
-            if (this.dom.listEl) {
-                this.dom.listEl.innerHTML = '';
-                if (!scored.length) {
-                    const empty = document.createElement('div');
-                    empty.className = 'empty';
-                    empty.textContent = textQuery || tagFilter ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
-                    this.dom.listEl.appendChild(empty);
-                    this.state.currentItems = [];
-                    return;
-                }
-                scored.forEach((entry, idx) => {
-                    const item = document.createElement('div');
-                    item.className = 'item';
-                    item.dataset.index = idx.toString();
-                    item.addEventListener('mouseenter', () => {
-                        this.state.activeIndex = idx;
-                        this.updateActive();
-                    });
-                    item.addEventListener('mousedown', e => e.preventDefault());
-                    item.addEventListener('click', () => {
-                        this.openItem(entry, false);
-                    });
-                    const icon = createFaviconEl(entry);
-                    const left = document.createElement('div');
-                    left.className = 'left';
-                    const name = document.createElement('div');
-                    name.className = 'name';
-                    name.textContent = entry.name || '(no title)';
-                    left.appendChild(name);
-                    if (entry.url) {
-                        const url = document.createElement('div');
-                        url.className = 'url';
-                        url.textContent = entry.url;
-                        left.appendChild(url);
-                    }
-                    if (entry.tags && entry.tags.length) {
-                        const tags = document.createElement('div');
-                        tags.className = 'tag-badges';
-                        entry.tags.forEach(tag => {
-                            const span = document.createElement('span');
-                            span.className = 'tag';
-                            span.textContent = tag;
-                            tags.appendChild(span);
-                        });
-                        left.appendChild(tags);
-                    }
-                    const right = document.createElement('div');
-                    right.innerHTML = '<span class="kbd">↵</span>';
-                    item.appendChild(icon);
-                    item.appendChild(left);
-                    item.appendChild(right);
-                    if (this.dom.listEl)
-                        this.dom.listEl.appendChild(item);
-                });
+            // 仮想スクロールを使用するかどうかを判定
+            const useVirtualScroll = scored.length >= this.VIRTUAL_SCROLL_THRESHOLD;
+            const hasQuery = !!(textQuery || tagFilter);
+            if (useVirtualScroll) {
+                this.renderVirtualList(scored, hasQuery);
+            }
+            else {
+                this.renderNormalList(scored, hasQuery);
             }
             this.state.currentItems = scored;
             this.updateActive();
+        }
+        /**
+         * 仮想スクロールを使用してリストをレンダリング
+         */
+        renderVirtualList(scored, hasQuery) {
+            if (!this.dom.listEl)
+                return;
+            // 仮想スクロールコンテナを初期化
+            if (!this.virtualScrollManager) {
+                this.setupVirtualScroll();
+            }
+            // 仮想スクロール用のアイテムデータに変換
+            const virtualItems = scored.map((entry, index) => ({
+                id: entry.id,
+                data: { entry, index }
+            }));
+            this.virtualScrollManager.setItems(virtualItems);
+            // 現在のスクロール位置で表示すべきアイテムを取得
+            const scrollTop = this.virtualScrollContainer?.scrollTop || 0;
+            const visibleItems = this.virtualScrollManager.getVisibleItems(scrollTop);
+            // コンテンツの高さを設定
+            if (this.virtualScrollContent) {
+                this.virtualScrollContent.style.height = `${this.virtualScrollManager.getTotalHeight()}px`;
+                this.virtualScrollContent.innerHTML = '';
+                // 表示アイテムをレンダリング
+                visibleItems.forEach(({ item, index, style }) => {
+                    const { entry } = item.data;
+                    const itemEl = this.createListItem(entry, index);
+                    itemEl.setAttribute('style', Object.entries(style).map(([k, v]) => `${k}: ${v}`).join('; '));
+                    this.virtualScrollContent.appendChild(itemEl);
+                });
+            }
+        }
+        /**
+         * 通常のリストをレンダリング
+         */
+        renderNormalList(scored, hasQuery) {
+            if (!this.dom.listEl)
+                return;
+            this.dom.listEl.innerHTML = '';
+            if (!scored.length) {
+                const empty = document.createElement('div');
+                empty.className = 'empty';
+                empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
+                this.dom.listEl.appendChild(empty);
+                return;
+            }
+            // アイテムをアニメーション付きで追加
+            scored.forEach((entry, idx) => {
+                const item = this.createListItem(entry, idx);
+                item.style.opacity = '0';
+                item.style.transform = 'translateY(10px)';
+                // アニメーションを適用
+                setTimeout(() => {
+                    scaleIn(item, 120);
+                }, idx * 30);
+                this.dom.listEl.appendChild(item);
+            });
+        }
+        /**
+         * 仮想スクロールをセットアップ
+         */
+        setupVirtualScroll() {
+            if (!this.dom.listEl)
+                return;
+            const containerHeight = Math.min(window.innerHeight * 0.6, 600);
+            const { container, content, manager } = createVirtualScrollContainer({
+                containerHeight,
+                itemHeight: 60, // 推定アイテム高さ
+                onScroll: (position) => {
+                    // スクロール時に再レンダリング
+                    this.performRenderList();
+                }
+            });
+            // 既存のリスト要素を仮想スクロールコンテナに置き換え
+            this.virtualScrollContainer = container;
+            this.virtualScrollContent = content;
+            this.virtualScrollManager = manager;
+            // スタイルを調整
+            container.style.width = '100%';
+            container.style.maxHeight = 'min(80vh, 1037px)';
+            container.style.overflowY = 'auto';
+            container.style.overflowX = 'hidden';
+            container.style.scrollbarWidth = 'none';
+            // Webkitスクロールバーを非表示
+            const style = document.createElement('style');
+            style.textContent = `
+      .virtual-scroll-container::-webkit-scrollbar { 
+        width: 0; 
+        height: 0; 
+      }
+    `;
+            container.appendChild(style);
+            // 既存のリスト要素を置き換え
+            if (this.dom.listEl.parentNode) {
+                this.dom.listEl.parentNode.replaceChild(container, this.dom.listEl);
+            }
+            this.dom.listEl = container;
+        }
+        /**
+         * リストアイテム要素を作成
+         */
+        createListItem(entry, index) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.dataset.index = index.toString();
+            item.addEventListener('mouseenter', () => {
+                this.state.activeIndex = index;
+                this.updateActive();
+            });
+            item.addEventListener('mousedown', e => e.preventDefault());
+            item.addEventListener('click', () => {
+                this.openItem(entry, false);
+            });
+            const icon = createFaviconEl(entry);
+            const left = document.createElement('div');
+            left.className = 'left';
+            left.style.alignSelf = 'center';
+            const name = document.createElement('div');
+            name.className = 'name';
+            name.textContent = entry.name || '(no title)';
+            left.appendChild(name);
+            if (entry.url) {
+                const url = document.createElement('div');
+                url.className = 'url';
+                url.textContent = entry.url;
+                left.appendChild(url);
+            }
+            if (entry.tags && entry.tags.length) {
+                const tags = document.createElement('div');
+                tags.className = 'tag-badges';
+                entry.tags.forEach(tag => {
+                    const span = document.createElement('span');
+                    span.className = 'tag';
+                    span.textContent = tag;
+                    tags.appendChild(span);
+                });
+                left.appendChild(tags);
+            }
+            const right = document.createElement('div');
+            right.innerHTML = '<span class="kbd">↵</span>';
+            item.appendChild(icon);
+            item.appendChild(left);
+            item.appendChild(right);
+            return item;
         }
         /**
          * アクティブなアイテムを更新する

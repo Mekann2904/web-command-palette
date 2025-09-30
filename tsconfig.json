@@ -22,10 +22,11 @@
       "@/types": ["src/types"],
       "@/constants": ["src/constants"]
     },
-    "types": []
+    "types": ["jest", "node"]
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "tests/**/*"
   ],
   "exclude": [
     "node_modules",

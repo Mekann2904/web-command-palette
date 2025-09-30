@@ -6,6 +6,8 @@ import { extractTagFilter, filterAndScoreEntries } from '@/utils/search';
 import { createFaviconEl } from '@/utils/dom';
 import { escapeHtml } from '@/utils/string';
 import { debounce } from '@/utils/debounce';
+import { fadeIn, fadeOut, slideInFromTop, scaleIn } from '@/utils/animations';
+import { VirtualScrollManager, VirtualScrollItem, createVirtualScrollContainer } from '@/utils/virtual-scroll';
 
 /**
  * メインパレットUIを管理するクラス
@@ -14,6 +16,10 @@ export class Palette {
   private state: AppState;
   private dom: DOMElements;
   private debouncedRenderList: () => void;
+  private virtualScrollManager: VirtualScrollManager | null = null;
+  private virtualScrollContainer: HTMLElement | null = null;
+  private virtualScrollContent: HTMLElement | null = null;
+  private readonly VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
 
   constructor(state: AppState, dom: DOMElements) {
     this.state = state;
@@ -39,7 +45,7 @@ export class Palette {
   /**
    * パレットを開く
    */
-  openPalette(): void {
+  async openPalette(): Promise<void> {
     this.ensureRoot();
     this.state.cachedSettings = getSettings();
     this.applyTheme();
@@ -50,9 +56,10 @@ export class Palette {
     }
     
     this.dom.overlayEl!.style.display = 'block';
-    requestAnimationFrame(() => {
-      this.dom.overlayEl!.classList.add('visible');
-    });
+    
+    // アニメーションを適用
+    await fadeIn(this.dom.overlayEl!, 160);
+    await slideInFromTop(this.dom.overlayEl!.querySelector('.panel')!, 200);
     
     this.dom.inputEl!.value = '';
     this.dom.inputEl!.placeholder = DEFAULT_PLACEHOLDER;
@@ -240,73 +247,190 @@ export class Palette {
       this.state.activeIndex = 0;
     }
 
-    if (this.dom.listEl) {
-      this.dom.listEl.innerHTML = '';
-      if (!scored.length) {
-        const empty = document.createElement('div');
-        empty.className = 'empty';
-        empty.textContent = textQuery || tagFilter ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
-        this.dom.listEl.appendChild(empty);
-        this.state.currentItems = [];
-        return;
-      }
+    // 仮想スクロールを使用するかどうかを判定
+    const useVirtualScroll = scored.length >= this.VIRTUAL_SCROLL_THRESHOLD;
+    const hasQuery = !!(textQuery || tagFilter);
 
-      scored.forEach((entry, idx) => {
-        const item = document.createElement('div');
-        item.className = 'item';
-        item.dataset.index = idx.toString();
-        
-        item.addEventListener('mouseenter', () => { 
-          this.state.activeIndex = idx; 
-          this.updateActive(); 
-        });
-        
-        item.addEventListener('mousedown', e => e.preventDefault());
-        item.addEventListener('click', () => { 
-          this.openItem(entry, false); 
-        });
-
-        const icon = createFaviconEl(entry);
-
-        const left = document.createElement('div');
-        left.className = 'left';
-        
-        const name = document.createElement('div');
-        name.className = 'name';
-        name.textContent = entry.name || '(no title)';
-        left.appendChild(name);
-
-        if (entry.url) {
-          const url = document.createElement('div');
-          url.className = 'url';
-          url.textContent = entry.url;
-          left.appendChild(url);
-        }
-
-        if (entry.tags && entry.tags.length) {
-          const tags = document.createElement('div');
-          tags.className = 'tag-badges';
-          entry.tags.forEach(tag => {
-            const span = document.createElement('span');
-            span.className = 'tag';
-            span.textContent = tag;
-            tags.appendChild(span);
-          });
-          left.appendChild(tags);
-        }
-
-        const right = document.createElement('div'); 
-        right.innerHTML = '<span class="kbd">↵</span>';
-
-        item.appendChild(icon); 
-        item.appendChild(left); 
-        item.appendChild(right);
-        if (this.dom.listEl) this.dom.listEl.appendChild(item);
-      });
+    if (useVirtualScroll) {
+      this.renderVirtualList(scored, hasQuery);
+    } else {
+      this.renderNormalList(scored, hasQuery);
     }
 
     this.state.currentItems = scored;
     this.updateActive();
+  }
+
+  /**
+   * 仮想スクロールを使用してリストをレンダリング
+   */
+  private renderVirtualList(scored: SiteEntry[], hasQuery: boolean): void {
+    if (!this.dom.listEl) return;
+
+    // 仮想スクロールコンテナを初期化
+    if (!this.virtualScrollManager) {
+      this.setupVirtualScroll();
+    }
+
+    // 仮想スクロール用のアイテムデータに変換
+    const virtualItems: VirtualScrollItem[] = scored.map((entry, index) => ({
+      id: entry.id,
+      data: { entry, index }
+    }));
+
+    this.virtualScrollManager!.setItems(virtualItems);
+
+    // 現在のスクロール位置で表示すべきアイテムを取得
+    const scrollTop = this.virtualScrollContainer?.scrollTop || 0;
+    const visibleItems = this.virtualScrollManager!.getVisibleItems(scrollTop);
+
+    // コンテンツの高さを設定
+    if (this.virtualScrollContent) {
+      this.virtualScrollContent.style.height = `${this.virtualScrollManager!.getTotalHeight()}px`;
+      this.virtualScrollContent.innerHTML = '';
+
+      // 表示アイテムをレンダリング
+      visibleItems.forEach(({ item, index, style }) => {
+        const { entry } = item.data;
+        const itemEl = this.createListItem(entry, index);
+        itemEl.setAttribute('style', Object.entries(style).map(([k, v]) => `${k}: ${v}`).join('; '));
+        this.virtualScrollContent!.appendChild(itemEl);
+      });
+    }
+  }
+
+  /**
+   * 通常のリストをレンダリング
+   */
+  private renderNormalList(scored: SiteEntry[], hasQuery: boolean): void {
+    if (!this.dom.listEl) return;
+
+    this.dom.listEl.innerHTML = '';
+    if (!scored.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
+      this.dom.listEl.appendChild(empty);
+      return;
+    }
+
+    // アイテムをアニメーション付きで追加
+    scored.forEach((entry, idx) => {
+      const item = this.createListItem(entry, idx);
+      item.style.opacity = '0';
+      item.style.transform = 'translateY(10px)';
+      
+      // アニメーションを適用
+      setTimeout(() => {
+        scaleIn(item, 120);
+      }, idx * 30);
+      
+      this.dom.listEl!.appendChild(item);
+    });
+  }
+
+  /**
+   * 仮想スクロールをセットアップ
+   */
+  private setupVirtualScroll(): void {
+    if (!this.dom.listEl) return;
+
+    const containerHeight = Math.min(window.innerHeight * 0.6, 600);
+    
+    const { container, content, manager } = createVirtualScrollContainer({
+      containerHeight,
+      itemHeight: 60, // 推定アイテム高さ
+      onScroll: (position) => {
+        // スクロール時に再レンダリング
+        this.performRenderList();
+      }
+    });
+
+    // 既存のリスト要素を仮想スクロールコンテナに置き換え
+    this.virtualScrollContainer = container;
+    this.virtualScrollContent = content;
+    this.virtualScrollManager = manager;
+
+    // スタイルを調整
+    container.style.width = '100%';
+    container.style.maxHeight = 'min(80vh, 1037px)';
+    container.style.overflowY = 'auto';
+    container.style.overflowX = 'hidden';
+    container.style.scrollbarWidth = 'none';
+    
+    // Webkitスクロールバーを非表示
+    const style = document.createElement('style');
+    style.textContent = `
+      .virtual-scroll-container::-webkit-scrollbar { 
+        width: 0; 
+        height: 0; 
+      }
+    `;
+    container.appendChild(style);
+
+    // 既存のリスト要素を置き換え
+    if (this.dom.listEl.parentNode) {
+      this.dom.listEl.parentNode.replaceChild(container, this.dom.listEl);
+    }
+    this.dom.listEl = container as HTMLDivElement;
+  }
+
+  /**
+   * リストアイテム要素を作成
+   */
+  private createListItem(entry: SiteEntry, index: number): HTMLElement {
+    const item = document.createElement('div');
+    item.className = 'item';
+    item.dataset.index = index.toString();
+    
+    item.addEventListener('mouseenter', () => { 
+      this.state.activeIndex = index; 
+      this.updateActive(); 
+    });
+    
+    item.addEventListener('mousedown', e => e.preventDefault());
+    item.addEventListener('click', () => { 
+      this.openItem(entry, false); 
+    });
+
+    const icon = createFaviconEl(entry);
+
+    const left = document.createElement('div');
+    left.className = 'left';
+    left.style.alignSelf = 'center';
+    
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = entry.name || '(no title)';
+    left.appendChild(name);
+
+    if (entry.url) {
+      const url = document.createElement('div');
+      url.className = 'url';
+      url.textContent = entry.url;
+      left.appendChild(url);
+    }
+
+    if (entry.tags && entry.tags.length) {
+      const tags = document.createElement('div');
+      tags.className = 'tag-badges';
+      entry.tags.forEach(tag => {
+        const span = document.createElement('span');
+        span.className = 'tag';
+        span.textContent = tag;
+        tags.appendChild(span);
+      });
+      left.appendChild(tags);
+    }
+
+    const right = document.createElement('div'); 
+    right.innerHTML = '<span class="kbd">↵</span>';
+
+    item.appendChild(icon); 
+    item.appendChild(left); 
+    item.appendChild(right);
+
+    return item;
   }
 
   /**
