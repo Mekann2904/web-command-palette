@@ -1,0 +1,46 @@
+import { Themes } from '@/types';
+
+export const themes: Themes = {
+  dark: {
+    '--overlay-bg': 'rgba(0,0,0,0.35)',
+    '--panel-bg': '#1f2937',
+    '--panel-text': '#e5e7eb',
+    '--panel-shadow': '0 10px 40px rgba(0,0,0,.45)',
+    '--input-bg': '#111827',
+    '--input-text': '#f3f4f6',
+    '--input-placeholder': '#9ca3af',
+    '--border-color': '#374151',
+    '--muted': '#94a3b8',
+    '--item-bg-alt': 'rgba(255,255,255,.02)',
+    '--item-active': '#374151',
+    '--hint-bg': '#111827',
+    '--list-scroll-thumb': '#4b5563',
+    '--list-scroll-track': 'rgba(255,255,255,0.08)',
+    '--command-badge-bg': 'rgba(255,255,255,0.12)',
+    '--tag-bg': 'rgba(79,70,229,0.2)',
+    '--tag-text': '#c7d2fe',
+    '--toast-bg': 'rgba(17,24,39,0.92)',
+    '--toast-text': '#e5e7eb'
+  },
+  light: {
+    '--overlay-bg': 'rgba(255,255,255,0.65)',
+    '--panel-bg': '#f9fafb',
+    '--panel-text': '#111827',
+    '--panel-shadow': '0 10px 36px rgba(15,23,42,.18)',
+    '--input-bg': '#ffffff',
+    '--input-text': '#111827',
+    '--input-placeholder': '#6b7280',
+    '--border-color': '#d1d5db',
+    '--muted': '#6b7280',
+    '--item-bg-alt': 'rgba(17,24,39,0.03)',
+    '--item-active': 'rgba(37,99,235,0.12)',
+    '--hint-bg': '#edf2f7',
+    '--list-scroll-thumb': '#94a3ff',
+    '--list-scroll-track': 'rgba(37,99,235,0.08)',
+    '--command-badge-bg': 'rgba(37,99,235,0.15)',
+    '--tag-bg': 'rgba(37,99,235,0.12)',
+    '--tag-text': '#1d4ed8',
+    '--toast-bg': 'rgba(255,255,255,0.95)',
+    '--toast-text': '#111827'
+  }
+};

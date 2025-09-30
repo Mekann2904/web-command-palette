@@ -1,0 +1,28 @@
+{
+  "name": "web-command-palette",
+  "version": "1.3.1",
+  "description": "ブラウザ上で動作するユーザースクリプト製コマンドパレット",
+  "main": "dist/script.user.js",
+  "type": "module",
+  "scripts": {
+    "dev": "rollup -c -w",
+    "build": "rollup -c",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^11.1.6",
+    "@violentmonkey/types": "^0.1.4",
+    "rollup": "^4.9.6",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.3"
+  },
+  "keywords": [
+    "userscript",
+    "violentmonkey",
+    "command-palette",
+    "productivity"
+  ],
+  "author": "mekann",
+  "license": "MIT"
+}
