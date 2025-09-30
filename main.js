@@ -192,6 +192,10 @@
   let isOpen = false, currentItems = [], activeIndex = 0;
   let cachedSettings = null;
 
+  // オートコンプリート関連の変数
+  let autocompleteEl, autocompleteItems = [], autocompleteIndex = -1;
+  let isAutocompleteVisible = false;
+
   function ensurePalette() {
     ensureRoot();
     if (overlayEl) return;
@@ -258,6 +262,15 @@
         90% { opacity: 1; transform: translateY(0); }
         100% { opacity: 0; transform: translateY(12px); }
       }
+
+      /* タグオートコンプリート */
+      .autocomplete-container { position: relative; }
+      .autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel-bg); border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; z-index: 2147483647; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+      .autocomplete-item { padding: 8px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
+      .autocomplete-item:last-child { border-bottom: none; }
+      .autocomplete-item:hover, .autocomplete-item.active { background: var(--item-active); }
+      .autocomplete-tag { background: var(--tag-bg); color: var(--tag-text); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+      .autocomplete-count { margin-left: auto; color: var(--muted); font-size: 12px; }
     `;
 
     overlayEl = document.createElement('div');
@@ -277,7 +290,7 @@
     hintEl = document.createElement('div');
     hintEl.className = 'hint';
     hintLeftSpan = document.createElement('span');
-    hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Esc: 閉じる';
+    hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
     const rightSpan = document.createElement('span');
     rightSpan.innerHTML = '<span class="link" id="vm-open-manager">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings">設定</span> · ⌘P / Ctrl+P';
     hintEl.appendChild(hintLeftSpan); hintEl.appendChild(rightSpan);
@@ -305,6 +318,214 @@
 
     buildManager();
     buildSettings();
+    buildAutocomplete();
+  }
+
+  function buildAutocomplete() {
+    const container = document.createElement('div');
+    container.className = 'autocomplete-container';
+    container.style.position = 'relative';
+    
+    autocompleteEl = document.createElement('div');
+    autocompleteEl.className = 'autocomplete-list';
+    autocompleteEl.style.display = 'none';
+    
+    // 元の入力欄をコンテナに移動（複製しない）
+    inputEl.parentNode.replaceChild(container, inputEl);
+    container.appendChild(inputEl);
+    container.appendChild(autocompleteEl);
+
+    // オートコンプリートのイベントリスナーを追加
+    inputEl.addEventListener('input', handleAutocompleteInput);
+    inputEl.addEventListener('keydown', handleAutocompleteKeydown);
+    inputEl.addEventListener('blur', () => {
+      setTimeout(() => hideAutocomplete(), 300);
+    });
+
+    // オートコンプリート要素自体のマウスイベントを追加
+    autocompleteEl.addEventListener('mousedown', (e) => {
+      e.preventDefault(); // クリック時のblurを防ぐ
+    });
+  }
+
+  function handleAutocompleteInput() {
+    const value = inputEl.value;
+    
+    // オートコンプリートの表示を少し遅らせて競合を防ぐ
+    setTimeout(() => {
+      // 空白が含まれている場合はタグフィルタリングモードではないので非表示
+      if (value.includes(' ')) {
+        hideAutocomplete();
+        return;
+      }
+      
+      // #が含まれている場合、オートコンプリートを表示
+      if (value.includes('#')) {
+        const afterHash = value.slice(value.indexOf('#') + 1);
+        showAutocomplete(afterHash);
+      } else {
+        hideAutocomplete();
+      }
+    }, 10);
+  }
+
+  function handleAutocompleteKeydown(e) {
+    if (!isAutocompleteVisible) return;
+    
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      autocompleteIndex = (autocompleteIndex + 1) % autocompleteItems.length;
+      updateAutocompleteActive();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      autocompleteIndex = (autocompleteIndex - 1 + autocompleteItems.length) % autocompleteItems.length;
+      updateAutocompleteActive();
+    } else if (e.key === 'Enter' && autocompleteIndex >= 0) {
+      e.preventDefault();
+      selectAutocompleteItem(autocompleteItems[autocompleteIndex]);
+    } else if (e.key === 'Escape') {
+      hideAutocomplete();
+    }
+  }
+
+  function showAutocomplete(query) {
+    const allTags = getAllTags();
+    const entries = getEntries();
+    
+    // 各タグの使用数を計算
+    const tagCounts = {};
+    entries.forEach(entry => {
+      if (entry.tags) {
+        entry.tags.forEach(tag => {
+          tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+        });
+      }
+    });
+    
+    // 階層タグ用のフィルタリングロジック
+    let filteredTags = [];
+    
+    if (query.includes('/')) {
+      // スラッシュがある場合は階層検索
+      const parts = query.split('/');
+      const parentQuery = parts.slice(0, -1).join('/');
+      const childQuery = parts[parts.length - 1];
+      
+      filteredTags = allTags.filter(tag => {
+        // 親階層が一致し、かつ子階層がクエリに部分一致するタグを検索
+        if (tag.startsWith(parentQuery + '/')) {
+          const childPart = tag.slice(parentQuery.length + 1);
+          return childPart.toLowerCase().includes(childQuery.toLowerCase());
+        }
+        return false;
+      });
+    } else {
+      // スラッシュがない場合は通常の部分一致検索
+      filteredTags = allTags.filter(tag => 
+        tag.toLowerCase().includes(query.toLowerCase())
+      );
+    }
+    
+    // 階層レベルに基づいてソート（浅い階層を優先）
+    filteredTags.sort((a, b) => {
+      const aDepth = (a.match(/\//g) || []).length;
+      const bDepth = (b.match(/\//g) || []).length;
+      if (aDepth !== bDepth) return aDepth - bDepth;
+      return a.localeCompare(b);
+    });
+    
+    const filteredTagObjects = filteredTags.map(tag => ({
+      name: tag,
+      count: tagCounts[tag] || 0
+    }));
+    
+    // フィルタリング結果が空の場合でもオートコンプリートを表示する
+    if (filteredTagObjects.length === 0) {
+      autocompleteItems = [];
+      autocompleteIndex = -1;
+      isAutocompleteVisible = true;
+      
+      // オートコンプリートリストを更新
+      autocompleteEl.innerHTML = '';
+      const emptyItem = document.createElement('div');
+      emptyItem.className = 'autocomplete-item';
+      emptyItem.textContent = '該当するタグがありません';
+      emptyItem.style.color = 'var(--muted)';
+      emptyItem.style.cursor = 'default';
+      emptyItem.addEventListener('click', (e) => e.preventDefault()); // クリックを無効化
+      autocompleteEl.appendChild(emptyItem);
+      
+      autocompleteEl.style.display = 'block';
+      updateAutocompleteActive();
+      return;
+    }
+    
+    autocompleteItems = filteredTagObjects;
+    autocompleteIndex = 0;
+    isAutocompleteVisible = true;
+    
+    // オートコンプリートリストを更新
+    autocompleteEl.innerHTML = '';
+    filteredTagObjects.forEach((tag, index) => {
+      const item = document.createElement('div');
+      item.className = 'autocomplete-item';
+      item.dataset.index = index;
+      
+      // 階層表示用のインデントを計算
+      const depth = (tag.name.match(/\//g) || []).length;
+      const displayName = tag.name.split('/').pop(); // 最後の部分のみ表示
+      const fullPath = tag.name;
+      
+      item.innerHTML = `
+        <span class="autocomplete-tag" style="margin-left: ${depth * 8}px">${escapeHtml(displayName)}</span>
+        <span class="autocomplete-count">${tag.count}件</span>
+        <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">${escapeHtml(fullPath)}</div>
+      `;
+      
+      item.addEventListener('click', () => selectAutocompleteItem(tag));
+      item.addEventListener('mouseenter', () => {
+        autocompleteIndex = index;
+        updateAutocompleteActive();
+      });
+      
+      autocompleteEl.appendChild(item);
+    });
+    
+    autocompleteEl.style.display = 'block';
+    updateAutocompleteActive();
+  }
+
+  function hideAutocomplete() {
+    isAutocompleteVisible = false;
+    autocompleteIndex = -1;
+    autocompleteEl.style.display = 'none';
+  }
+
+  function updateAutocompleteActive() {
+    const items = autocompleteEl.querySelectorAll('.autocomplete-item');
+    items.forEach((item, index) => {
+      item.classList.toggle('active', index === autocompleteIndex);
+    });
+  }
+
+  function selectAutocompleteItem(tag) {
+    const currentValue = inputEl.value;
+    const hashIndex = currentValue.indexOf('#');
+    
+    if (hashIndex >= 0) {
+      const beforeHash = currentValue.slice(0, hashIndex);
+      inputEl.value = beforeHash + '#' + tag.name + ' ';
+    } else {
+      inputEl.value = '#' + tag.name + ' ';
+    }
+    
+    hideAutocomplete();
+    inputEl.focus();
+    
+    // タグ選択後はどの項目もアクティブにしない
+    activeIndex = -1;
+    renderList();
+    updateActive();
   }
 
   function openPalette() {
@@ -332,12 +553,37 @@
     if (e.isComposing || e.keyCode === 229) {
       return;
     }
+    
+    // オートコンプリート表示中のキーボード操作を優先
+    if (isAutocompleteVisible) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideAutocomplete();
+        return;
+      }
+      // オートコンプリートのキーボード操作は handleAutocompleteKeydown で処理される
+      return;
+    }
+    
     if (e.key === 'Enter' && e.metaKey) {
       e.preventDefault();
       runBingSearchFromInput();
       return;
     }
     if (e.key === 'Escape') { hidePalette(); return; }
+    
+    // タグフィルタリングのショートカットキー
+    if (e.key === 'Tab' && !e.shiftKey && inputEl.value.trim() === '') {
+      e.preventDefault();
+      const allTags = getAllTags();
+      if (allTags.length > 0) {
+        inputEl.value = '#' + allTags[0] + ' ';
+        renderList();
+        showAutocomplete(allTags[0]);
+      }
+      return;
+    }
+    
     if (!currentItems.length) {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -358,11 +604,27 @@
   const normalize = s => (s || '').toLowerCase();
   function extractTagFilter(query) {
     const trimmed = query.trim();
-    if (!trimmed.startsWith('@')) return { tagFilter: null, textQuery: query };
+    if (!trimmed.startsWith('#')) return { tagFilter: null, textQuery: query };
     const parts = trimmed.split(/\s+/);
     const first = parts.shift();
     const tag = normalize(first.slice(1));
     return { tagFilter: tag || null, textQuery: parts.join(' ') };
+  }
+
+  // すべてのタグを取得する関数
+  function getAllTags() {
+    const entries = getEntries();
+    const tagSet = new Set();
+    entries.forEach(entry => {
+      if (entry.tags && Array.isArray(entry.tags)) {
+        entry.tags.forEach(tag => {
+          if (tag && tag.trim()) {
+            tagSet.add(tag.trim());
+          }
+        });
+      }
+    });
+    return Array.from(tagSet).sort();
   }
 
   function getUsageBoost(entry) {
