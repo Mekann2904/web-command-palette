@@ -40,12 +40,22 @@ export class Autocomplete {
     // オートコンプリートのイベントリスナーを追加
     this.dom.inputEl!.addEventListener('input', this.handleAutocompleteInput);
     this.dom.inputEl!.addEventListener('keydown', this.handleAutocompleteKeydown);
-    this.dom.inputEl!.addEventListener('blur', () => {
-      setTimeout(() => this.hideAutocomplete(), 300);
+    
+    // blur 時、実際に外へ出たときだけ閉じる
+    this.dom.inputEl!.addEventListener('blur', (e) => {
+      const to = e.relatedTarget as Node;
+      const insideAuto = to && this.dom.autocompleteEl!.contains(to);
+      setTimeout(() => {
+        if (!insideAuto && !this.dom.autocompleteEl!.matches(':hover')) {
+          this.hideAutocomplete();
+        }
+      }, 0);
     });
 
-    this.dom.autocompleteEl.addEventListener('mousedown', (e) => {
-      e.preventDefault();
+    // オートコンプリート内クリック時にフォーカスを奪われても閉じない
+    this.dom.autocompleteEl!.addEventListener('mousedown', (e) => {
+      e.preventDefault();        // 入力の blur を抑止
+      this.dom.inputEl!.focus();  // フォーカスを戻す
     });
   }
 
@@ -56,13 +66,11 @@ export class Autocomplete {
     const value = this.dom.inputEl!.value;
     
     setTimeout(() => {
-      if (value.includes(' ')) {
-        this.hideAutocomplete();
-        return;
-      }
-      
       if (value.includes('#')) {
-        const afterHash = value.slice(value.indexOf('#') + 1);
+        const hashIndex = value.indexOf('#');
+        const afterHash = value.slice(hashIndex + 1);
+        console.log('[CommandPalette] Autocomplete input - value:', value);
+        console.log('[CommandPalette] Autocomplete input - afterHash:', afterHash);
         this.showAutocomplete(afterHash);
       } else {
         this.hideAutocomplete();
@@ -96,8 +104,10 @@ export class Autocomplete {
    * オートコンプリートを表示
    */
   showAutocomplete(query: string): void {
-    const allTags = getAllTags();
     const entries = this.getEntries();
+    console.log('[CommandPalette] Autocomplete - entries from storage:', entries);
+    const allTags = getAllTags(entries);
+    console.log('[CommandPalette] Autocomplete - allTags:', allTags);
     
     const tagCounts: Record<string, number> = {};
     entries.forEach(entry => {
@@ -123,9 +133,34 @@ export class Autocomplete {
         return false;
       });
     } else {
-      filteredTags = allTags.filter(tag => 
-        tag.toLowerCase().includes(query.toLowerCase())
-      );
+      filteredTags = allTags.filter(tag => {
+        // 完全一致または部分一致
+        const tagLower = tag.toLowerCase();
+        const queryLower = query.toLowerCase();
+        
+        console.log(`[CommandPalette] Filtering tag "${tag}" against query "${query}"`);
+        
+        // 完全一致
+        if (tagLower === queryLower) {
+          console.log(`[CommandPalette] Exact match: ${tag}`);
+          return true;
+        }
+        
+        // 部分一致
+        if (tagLower.includes(queryLower)) {
+          console.log(`[CommandPalette] Partial match: ${tag}`);
+          return true;
+        }
+        
+        // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
+        const parts = tag.split('/');
+        if (parts.some(part => part.toLowerCase().includes(queryLower))) {
+          console.log(`[CommandPalette] Parent tag match: ${tag}`);
+          return true;
+        }
+        
+        return false;
+      });
     }
     
     filteredTags.sort((a, b) => {
@@ -146,13 +181,34 @@ export class Autocomplete {
       this.state.isVisible = true;
       
       this.dom.autocompleteEl!.innerHTML = '';
-      const emptyItem = document.createElement('div');
-      emptyItem.className = 'autocomplete-item';
-      emptyItem.textContent = '該当するタグがありません';
-      emptyItem.style.color = 'var(--muted)';
-      emptyItem.style.cursor = 'default';
-      emptyItem.addEventListener('click', (e) => e.preventDefault());
-      this.dom.autocompleteEl!.appendChild(emptyItem);
+      
+      // 新規タグ作成を提案
+      const createItem = document.createElement('div');
+      createItem.className = 'autocomplete-item';
+      createItem.style.cursor = 'pointer';
+      createItem.innerHTML = `
+        <span class="autocomplete-tag" style="color: var(--accent-color);">➕ 新規タグを作成: "${escapeHtml(query)}"</span>
+        <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">Enterで作成して続行</div>
+      `;
+      createItem.addEventListener('click', () => {
+        this.createNewTag(query);
+      });
+      this.dom.autocompleteEl!.appendChild(createItem);
+      
+      // デバッグ情報
+      const debugItem = document.createElement('div');
+      debugItem.className = 'autocomplete-item';
+      debugItem.style.color = 'var(--muted)';
+      debugItem.style.fontSize = '11px';
+      debugItem.style.cursor = 'default';
+      debugItem.innerHTML = `
+        <div>デバッグ情報:</div>
+        <div>・全タグ数: ${allTags.length}</div>
+        <div>・検索クエリ: "${escapeHtml(query)}"</div>
+        <div>・サイト数: ${entries.length}</div>
+      `;
+      debugItem.addEventListener('click', (e) => e.preventDefault());
+      this.dom.autocompleteEl!.appendChild(debugItem);
       
       this.dom.autocompleteEl!.style.display = 'block';
       this.updateAutocompleteActive();
@@ -223,9 +279,9 @@ export class Autocomplete {
     
     if (hashIndex >= 0) {
       const beforeHash = currentValue.slice(0, hashIndex);
-      this.dom.inputEl!.value = beforeHash + '#' + tag.name + ' ';
+      this.dom.inputEl!.value = beforeHash + '#' + tag.name;
     } else {
-      this.dom.inputEl!.value = '#' + tag.name + ' ';
+      this.dom.inputEl!.value = '#' + tag.name;
     }
     
     this.hideAutocomplete();
@@ -237,11 +293,34 @@ export class Autocomplete {
   }
 
   /**
-   * エントリを取得する（暫定実装）
+   * 新規タグを作成
+   */
+  private createNewTag(tagName: string): void {
+    const currentValue = this.dom.inputEl!.value;
+    const hashIndex = currentValue.indexOf('#');
+    
+    if (hashIndex >= 0) {
+      const beforeHash = currentValue.slice(0, hashIndex);
+      this.dom.inputEl!.value = beforeHash + '#' + tagName;
+    } else {
+      this.dom.inputEl!.value = '#' + tagName;
+    }
+    
+    this.hideAutocomplete();
+    this.dom.inputEl!.focus();
+    
+    // アクティブインデックスをリセットして再レンダリング
+    this.onRenderList();
+    this.onUpdateActive();
+  }
+
+  /**
+   * エントリを取得する（正規化済み）
    */
   private getEntries(): any[] {
     try {
-      return (window as any).GM_getValue?.('vm_sites_palette__sites', []) || [];
+      const getSites = require('@/core/storage').getSites;
+      return getSites();
     } catch {
       return [];
     }

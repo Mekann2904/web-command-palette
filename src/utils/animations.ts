@@ -12,42 +12,21 @@ export function applyTransition(
   easing: string = 'ease'
 ): Promise<void> {
   return new Promise(resolve => {
-    // すでにトランジション中の場合は待機
-    if (getComputedStyle(element).transitionProperty !== 'none') {
-      const handler = () => {
-        element.removeEventListener('transitionend', handler);
-        resolve();
-      };
-      element.addEventListener('transitionend', handler);
-      return;
-    }
-
-    // トランジションを適用
     const originalTransition = element.style.transition;
-    const originalValues: Record<string, string> = {};
-
-    // 現在の値を保存
-    Object.keys(properties).forEach(prop => {
-      originalValues[prop] = element.style.getPropertyValue(prop);
-    });
-
-    // トランジションを設定
     element.style.transition = `all ${duration}ms ${easing}`;
-    
-    // 適用後のハンドラ
     const handler = () => {
       element.removeEventListener('transitionend', handler);
       element.style.transition = originalTransition;
       resolve();
     };
-    element.addEventListener('transitionend', handler);
-
-    // プロパティを適用
+    element.addEventListener('transitionend', handler, { once: true });
     requestAnimationFrame(() => {
-      Object.entries(properties).forEach(([prop, value]) => {
+      for (const [prop, value] of Object.entries(properties)) {
         element.style.setProperty(prop, value);
-      });
+      }
     });
+    // 念のための保険（transitionend が来ないケース）
+    setTimeout(handler, duration + 60);
   });
 }
 

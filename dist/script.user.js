@@ -298,17 +298,47 @@
      * すべてのタグを取得する
      */
     const getAllTags = (entries = []) => {
+        // 省略時はストレージから取得
+        if (!entries || entries.length === 0) {
+            try {
+                entries = getSites();
+            }
+            catch (_) {
+                entries = [];
+            }
+        }
         const tagSet = new Set();
-        entries.forEach(item => {
+        // デバッグ情報
+        console.log('[CommandPalette] getAllTags - entries count:', entries.length);
+        console.log('[CommandPalette] getAllTags - entries:', entries);
+        entries.forEach((item, index) => {
+            console.log(`[CommandPalette] Processing entry ${index}:`, {
+                id: item.id,
+                name: item.name,
+                tags: item.tags,
+                tagsType: typeof item.tags,
+                tagsIsArray: Array.isArray(item.tags)
+            });
             if (item.tags && Array.isArray(item.tags)) {
-                item.tags.forEach(tag => {
-                    if (tag && tag.trim()) {
-                        tagSet.add(tag.trim());
+                item.tags.forEach((tag, tagIndex) => {
+                    console.log(`[CommandPalette] Processing tag ${tagIndex}:`, tag);
+                    if (tag && typeof tag === 'string' && tag.trim()) {
+                        const cleanTag = tag.trim();
+                        tagSet.add(cleanTag);
+                        console.log(`[CommandPalette] Added tag: "${cleanTag}"`);
+                    }
+                    else {
+                        console.log(`[CommandPalette] Skipped invalid tag:`, tag);
                     }
                 });
             }
+            else {
+                console.log(`[CommandPalette] Entry ${index} has no valid tags array`);
+            }
         });
-        return Array.from(tagSet).sort();
+        const result = Array.from(tagSet).sort();
+        console.log('[CommandPalette] getAllTags - final tags:', result);
+        return result;
     };
     /**
      * 使用回数ブーストを取得する
@@ -594,58 +624,22 @@
      */
     function applyTransition(element, properties, duration = 200, easing = 'ease') {
         return new Promise(resolve => {
-            // すでにトランジション中の場合は待機
-            if (getComputedStyle(element).transitionProperty !== 'none') {
-                const handler = () => {
-                    element.removeEventListener('transitionend', handler);
-                    resolve();
-                };
-                element.addEventListener('transitionend', handler);
-                return;
-            }
-            // トランジションを適用
             const originalTransition = element.style.transition;
-            // 現在の値を保存
-            Object.keys(properties).forEach(prop => {
-                element.style.getPropertyValue(prop);
-            });
-            // トランジションを設定
             element.style.transition = `all ${duration}ms ${easing}`;
-            // 適用後のハンドラ
             const handler = () => {
                 element.removeEventListener('transitionend', handler);
                 element.style.transition = originalTransition;
                 resolve();
             };
-            element.addEventListener('transitionend', handler);
-            // プロパティを適用
+            element.addEventListener('transitionend', handler, { once: true });
             requestAnimationFrame(() => {
-                Object.entries(properties).forEach(([prop, value]) => {
+                for (const [prop, value] of Object.entries(properties)) {
                     element.style.setProperty(prop, value);
-                });
+                }
             });
+            // 念のための保険（transitionend が来ないケース）
+            setTimeout(handler, duration + 60);
         });
-    }
-    /**
-     * フェードインアニメーション
-     */
-    function fadeIn(element, duration = 200) {
-        element.style.opacity = '0';
-        element.style.display = '';
-        return applyTransition(element, { opacity: '1' }, duration);
-    }
-    /**
-     * スライドインアニメーション（上から）
-     */
-    function slideInFromTop(element, duration = 200) {
-        const originalTransform = element.style.transform;
-        element.style.transform = 'translateY(-20px)';
-        element.style.opacity = '0';
-        element.style.display = '';
-        return applyTransition(element, {
-            transform: originalTransform || 'translateY(0)',
-            opacity: '1'
-        }, duration);
     }
     /**
      * スケールインアニメーション
@@ -877,9 +871,8 @@
                 this.createPaletteUI();
             }
             this.dom.overlayEl.style.display = 'block';
-            // アニメーションを適用
-            await fadeIn(this.dom.overlayEl, 160);
-            await slideInFromTop(this.dom.overlayEl.querySelector('.panel'), 200);
+            // CSSベースの遷移を発火
+            this.dom.overlayEl.classList.add('visible');
             this.dom.inputEl.value = '';
             this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
             this.state.activeIndex = 0;
@@ -894,11 +887,12 @@
             if (!this.dom.overlayEl)
                 return;
             this.dom.overlayEl.classList.remove('visible');
+            // CSSのtransition時間を踏まえて余裕を持って隠す
             setTimeout(() => {
                 if (!this.state.isOpen && this.dom.overlayEl) {
                     this.dom.overlayEl.style.display = 'none';
                 }
-            }, 180);
+            }, 220);
         }
         /**
          * テーマを適用する
@@ -918,113 +912,142 @@
          * パレットUIを作成する
          */
         createPaletteUI() {
-            const style = document.createElement('style');
-            style.textContent = `
-      :host { all: initial; }
-      .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
-      .overlay.visible { opacity: 1; }
-      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
-      .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
-      .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
-      .input::placeholder { color: var(--input-placeholder); }
-      .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
-      .link { cursor: pointer; color: var(--accent-color); }
-      .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
-      .list::-webkit-scrollbar { width: 0; height: 0; }
-      .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
-      .item:nth-child(odd) { background: var(--item-bg-alt); }
-      .item.active { background: var(--item-active); transform: translateX(2px); }
-      .item .name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
-      .item .name .command-badge { margin-left: 0; }
-      .item .url { font-size: 12px; color: var(--muted); }
-      .item img.ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #fff; border: 1px solid var(--border-color); }
-      .item .ico-letter { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--hint-bg); color: var(--panel-text); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-transform: uppercase; }
-      .item .tag-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
-      .tag { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--tag-bg); color: var(--tag-text); font-size: 10px; border-radius: 999px; }
-      .tag::before { content: '#'; opacity: 0.7; margin-right: 2px; }
-      .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
-      .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
-      .command-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; background: var(--command-badge-bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--panel-text); }
-      .group-title { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-    `;
-            this.dom.overlayEl = document.createElement('div');
-            this.dom.overlayEl.className = 'overlay';
-            const panel = document.createElement('div');
-            panel.className = 'panel';
-            this.dom.inputEl = document.createElement('input');
-            this.dom.inputEl.className = 'input';
-            this.dom.inputEl.type = 'text';
-            this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
-            this.dom.listEl = document.createElement('div');
-            this.dom.listEl.className = 'list';
-            this.dom.hintEl = document.createElement('div');
-            this.dom.hintEl.className = 'hint';
-            this.dom.hintLeftSpan = document.createElement('span');
-            this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
-            const rightSpan = document.createElement('span');
-            rightSpan.innerHTML = '<span class="link" id="vm-open-manager">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings">設定</span> · ⌘P / Ctrl+P';
-            this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
-            this.dom.hintEl.appendChild(rightSpan);
-            panel.appendChild(this.dom.inputEl);
-            panel.appendChild(this.dom.listEl);
-            panel.appendChild(this.dom.hintEl);
-            this.dom.overlayEl.appendChild(panel);
-            // トースト要素を作成
-            this.dom.toastEl = document.createElement('div');
-            this.dom.toastEl.className = 'toast';
-            this.dom.root.appendChild(style);
-            this.dom.root.appendChild(this.dom.overlayEl);
-            this.dom.root.appendChild(this.dom.toastEl);
-            // マネージャと設定のCSSを追加
-            const managerStyle = document.createElement('style');
-            managerStyle.textContent = `
-      /* Manager / Settings */
-      .mgr-overlay, .set-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; }
-      .mgr, .set { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: min(860px, 94vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
-      .mgr header, .set header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
-      .mgr header h3, .set header h3 { margin: 0; font-size: 16px; }
-      .mgr-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
-      .tab-btn { flex: none; }
-      .tab-btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12); }
-      .mgr-tab.hidden { display: none; }
-      .mgr .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
-      .mgr .tbl th, .mgr .tbl td { border-bottom: 1px solid var(--border-color); padding: 8px 10px; vertical-align: top; }
-      .mgr .tbl th { text-align: left; color: var(--muted); font-weight: 600; }
-      .mgr input[type=text], .mgr textarea, .set input[type=text], .set textarea, .set select, .set input[type=color] { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 14px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--input-text); border-radius: 8px; }
-      .mgr textarea { resize: vertical; min-height: 56px; }
-      .mgr .row-btns button { margin-right: 6px; }
-      .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--panel-text); cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
-      .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
-      .btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
-      .btn.danger { background: #7f1d1d; border-color: #7f1d1d; color: #fee2e2; }
-      .mgr footer, .set footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-      .muted { color: var(--muted); font-size: 12px; }
-      .drag { cursor: grab; }
-      .form-row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; padding: 10px 14px; }
-      .inline { display: flex; gap: 12px; align-items: center; }
-      .hotkey-box { text-align: center; font-size: 14px; padding: 8px 10px; border: 1px dashed var(--border-color); border-radius: 8px; user-select: none; background: var(--input-bg); color: var(--input-text); }
-      .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--command-badge-bg); color: var(--panel-text); }
-      .toast { position: fixed; inset: auto 0 24px 0; display: none; justify-content: center; pointer-events: none; }
-      .toast-message { background: var(--toast-bg); color: var(--toast-text); padding: 10px 16px; border-radius: 999px; box-shadow: 0 10px 20px rgba(0,0,0,0.2); animation: fade-slide 2.4s ease forwards; }
-      @keyframes fade-slide {
-        0% { opacity: 0; transform: translateY(18px); }
-        10% { opacity: 1; transform: translateY(0); }
-        90% { opacity: 1; transform: translateY(0); }
-        100% { opacity: 0; transform: translateY(12px); }
-      }
+            try {
+                // Rootが確保されているか確認
+                if (!this.dom.root) {
+                    console.error('[CommandPalette] Shadow root not available');
+                    return;
+                }
+                const style = document.createElement('style');
+                style.textContent = `
+        :host { all: initial; }
+        .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
+        .overlay.visible { opacity: 1; }
+        .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
+        .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
+        .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
+        .input::placeholder { color: var(--input-placeholder); }
+        .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
+        .link { cursor: pointer; color: var(--accent-color); }
+        .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+        .list::-webkit-scrollbar { width: 0; height: 0; }
+        .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
+        .item:nth-child(odd) { background: var(--item-bg-alt); }
+        .item.active { background: var(--item-active); transform: translateX(2px); }
+        .item .name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+        .item .name .command-badge { margin-left: 0; }
+        .item .url { font-size: 12px; color: var(--muted); }
+        .item img.ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #fff; border: 1px solid var(--border-color); }
+        .item .ico-letter { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--hint-bg); color: var(--panel-text); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-transform: uppercase; }
+        .item .tag-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+        .tag { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--tag-bg); color: var(--tag-text); font-size: 10px; border-radius: 999px; }
+        .tag::before { content: '#'; opacity: 0.7; margin-right: 2px; }
+        .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
+        .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
+        .command-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; background: var(--command-badge-bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--panel-text); }
+        .group-title { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+      `;
+                this.dom.overlayEl = document.createElement('div');
+                this.dom.overlayEl.className = 'overlay';
+                const panel = document.createElement('div');
+                panel.className = 'panel';
+                this.dom.inputEl = document.createElement('input');
+                this.dom.inputEl.className = 'input';
+                this.dom.inputEl.type = 'text';
+                this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
+                this.dom.listEl = document.createElement('div');
+                this.dom.listEl.className = 'list';
+                this.dom.hintEl = document.createElement('div');
+                this.dom.hintEl.className = 'hint';
+                this.dom.hintLeftSpan = document.createElement('span');
+                this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
+                const rightSpan = document.createElement('span');
+                rightSpan.innerHTML = '<span class="link" id="vm-open-manager">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings">設定</span> · ⌘P / Ctrl+P';
+                // nullチェックを追加
+                if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
+                    this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
+                    this.dom.hintEl.appendChild(rightSpan);
+                }
+                if (panel && this.dom.inputEl && this.dom.listEl && this.dom.hintEl) {
+                    panel.appendChild(this.dom.inputEl);
+                    panel.appendChild(this.dom.listEl);
+                    panel.appendChild(this.dom.hintEl);
+                }
+                if (this.dom.overlayEl && panel) {
+                    this.dom.overlayEl.appendChild(panel);
+                }
+                // トースト要素を作成
+                this.dom.toastEl = document.createElement('div');
+                this.dom.toastEl.className = 'toast';
+                // nullチェックを追加してからappendChild
+                if (this.dom.root) {
+                    this.dom.root.appendChild(style);
+                    if (this.dom.overlayEl) {
+                        this.dom.root.appendChild(this.dom.overlayEl);
+                    }
+                    if (this.dom.toastEl) {
+                        this.dom.root.appendChild(this.dom.toastEl);
+                    }
+                }
+                // マネージャと設定のCSSを追加
+                const managerStyle = document.createElement('style');
+                managerStyle.textContent = `
+        /* Manager / Settings */
+        .mgr-overlay, .set-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; }
+        .mgr, .set { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: min(860px, 94vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
+        .mgr header, .set header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
+        .mgr header h3, .set header h3 { margin: 0; font-size: 16px; }
+        .mgr-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+        .tab-btn { flex: none; }
+        .tab-btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12); }
+        .mgr-tab.hidden { display: none; }
+        .mgr .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .mgr .tbl th, .mgr .tbl td { border-bottom: 1px solid var(--border-color); padding: 8px 10px; vertical-align: top; }
+        .mgr .tbl th { text-align: left; color: var(--muted); font-weight: 600; }
+        .mgr input[type=text], .mgr textarea, .set input[type=text], .set textarea, .set select, .set input[type=color] { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 14px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--input-text); border-radius: 8px; }
+        .mgr textarea { resize: vertical; min-height: 56px; }
+        .mgr .row-btns button { margin-right: 6px; }
+        .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--panel-text); cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+        .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
+        .btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
+        .btn.danger { background: #7f1d1d; border-color: #7f1d1d; color: #fee2e2; }
+        .mgr footer, .set footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+        .muted { color: var(--muted); font-size: 12px; }
+        .drag { cursor: grab; }
+        .form-row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; padding: 10px 14px; }
+        .inline { display: flex; gap: 12px; align-items: center; }
+        .hotkey-box { text-align: center; font-size: 14px; padding: 8px 10px; border: 1px dashed var(--border-color); border-radius: 8px; user-select: none; background: var(--input-bg); color: var(--input-text); }
+        .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--command-badge-bg); color: var(--panel-text); }
+        .toast { position: fixed; inset: auto 0 24px 0; display: none; justify-content: center; pointer-events: none; }
+        .toast-message { background: var(--toast-bg); color: var(--toast-text); padding: 10px 16px; border-radius: 999px; box-shadow: 0 10px 20px rgba(0,0,0,0.2); animation: fade-slide 2.4s ease forwards; }
+        @keyframes fade-slide {
+          0% { opacity: 0; transform: translateY(18px); }
+          10% { opacity: 1; transform: translateY(0); }
+          90% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(12px); }
+        }
 
-      /* タグオートコンプリート */
-      .autocomplete-container { position: relative; }
-      .autocomplete-list { position: absolute; top: 100%; left: 0; right: 0; background: var(--panel-bg); border: 1px solid var(--border-color); border-top: none; border-radius: 0 0 8px 8px; max-height: 200px; overflow-y: auto; z-index: 2147483647; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-      .autocomplete-item { padding: 8px 12px; cursor: pointer; font-size: 14px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; gap: 8px; }
-      .autocomplete-item:last-child { border-bottom: none; }
-      .autocomplete-item:hover, .autocomplete-item.active { background: var(--item-active); }
-      .autocomplete-tag { background: var(--tag-bg); color: var(--tag-text); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
-      .autocomplete-count { margin-left: auto; color: var(--muted); font-size: 12px; }
-    `;
-            this.dom.root.appendChild(managerStyle);
-            // グローバルアクセス用
-            window.toastEl = this.dom.toastEl;
+        /* タグ候補 */
+        .tag-suggestion { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; background: var(--tag-suggestion-bg); border-bottom: 1px solid var(--border-color); }
+        .tag-suggestion:hover, .tag-suggestion.active { background: var(--item-active); transform: translateX(2px); }
+        .tag-suggestion .tag-icon { width: 18px; height: 18px; border-radius: 4px; background: var(--accent-color); color: white; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: bold; }
+        .tag-suggestion .tag-info { display: flex; flex-direction: column; gap: 2px; }
+        .tag-suggestion .tag-name { font-size: 14px; font-weight: 500; }
+        .tag-suggestion .tag-path { font-size: 11px; color: var(--muted); }
+        .tag-suggestion .tag-count { font-size: 12px; color: var(--muted); }
+        .tag-suggestion .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
+      `;
+                if (this.dom.root) {
+                    this.dom.root.appendChild(managerStyle);
+                }
+                // グローバルアクセス用
+                if (this.dom.toastEl) {
+                    window.toastEl = this.dom.toastEl;
+                }
+            }
+            catch (error) {
+                console.error('[CommandPalette] Error creating palette UI:', error);
+            }
         }
         /**
          * リストをレンダリングする（デバウンス対応）
@@ -1039,8 +1062,10 @@
             const rawQuery = this.dom.inputEl?.value || '';
             const { tagFilter, textQuery } = extractTagFilter(rawQuery);
             const entries = this.getEntries();
-            const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => t === tagFilter)) : entries;
+            const filtered = tagFilter ? entries.filter(e => (e.tags || []).some(t => normalize(t) === tagFilter)) : entries;
             const scored = filterAndScoreEntries(filtered, textQuery, this.getUsageCache());
+            // タグ候補を表示するか判定
+            const shouldShowTagSuggestions = rawQuery.includes('#') && !rawQuery.includes(' ');
             if (scored.length) {
                 if (this.state.activeIndex >= scored.length)
                     this.state.activeIndex = scored.length - 1;
@@ -1054,10 +1079,10 @@
             const useVirtualScroll = scored.length >= this.VIRTUAL_SCROLL_THRESHOLD;
             const hasQuery = !!(textQuery || tagFilter);
             if (useVirtualScroll) {
-                this.renderVirtualList(scored, hasQuery);
+                this.renderVirtualList(scored, hasQuery, shouldShowTagSuggestions);
             }
             else {
-                this.renderNormalList(scored, hasQuery);
+                this.renderNormalList(scored, hasQuery, shouldShowTagSuggestions);
             }
             this.state.currentItems = scored;
             this.updateActive();
@@ -1065,7 +1090,7 @@
         /**
          * 仮想スクロールを使用してリストをレンダリング
          */
-        renderVirtualList(scored, hasQuery) {
+        renderVirtualList(scored, hasQuery, shouldShowTagSuggestions = false) {
             if (!this.dom.listEl)
                 return;
             // 仮想スクロールコンテナを初期化
@@ -1097,11 +1122,24 @@
         /**
          * 通常のリストをレンダリング
          */
-        renderNormalList(scored, hasQuery) {
+        renderNormalList(scored, hasQuery, shouldShowTagSuggestions = false) {
             if (!this.dom.listEl)
                 return;
             this.dom.listEl.innerHTML = '';
-            if (!scored.length) {
+            // タグ候補を表示
+            if (shouldShowTagSuggestions) {
+                const tagSuggestions = this.createTagSuggestions();
+                tagSuggestions.forEach((suggestion, idx) => {
+                    suggestion.style.opacity = '0';
+                    suggestion.style.transform = 'translateY(10px)';
+                    // アニメーションを適用
+                    setTimeout(() => {
+                        scaleIn(suggestion, 120);
+                    }, idx * 30);
+                    this.dom.listEl.appendChild(suggestion);
+                });
+            }
+            if (!scored.length && !shouldShowTagSuggestions) {
                 const empty = document.createElement('div');
                 empty.className = 'empty';
                 empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
@@ -1110,15 +1148,181 @@
             }
             // アイテムをアニメーション付きで追加
             scored.forEach((entry, idx) => {
-                const item = this.createListItem(entry, idx);
+                const item = this.createListItem(entry, idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0));
                 item.style.opacity = '0';
                 item.style.transform = 'translateY(10px)';
                 // アニメーションを適用
                 setTimeout(() => {
                     scaleIn(item, 120);
-                }, idx * 30);
+                }, (idx + (shouldShowTagSuggestions ? this.getTagSuggestionsCount() : 0)) * 30);
                 this.dom.listEl.appendChild(item);
             });
+        }
+        /**
+         * タグ候補を作成
+         */
+        createTagSuggestions() {
+            const rawQuery = this.dom.inputEl?.value || '';
+            const { tagFilter, textQuery } = extractTagFilter(rawQuery);
+            if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
+                return [];
+            }
+            const entries = this.getEntries();
+            const allTags = this.getAllTags(entries);
+            const tagCounts = {};
+            entries.forEach(entry => {
+                if (entry.tags) {
+                    entry.tags.forEach((tag) => {
+                        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+                    });
+                }
+            });
+            const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
+            let filteredTags = [];
+            if (afterHash.includes('/')) {
+                const parts = afterHash.split('/');
+                const parentQuery = parts.slice(0, -1).join('/');
+                const childQuery = parts[parts.length - 1];
+                filteredTags = allTags.filter(tag => {
+                    if (tag.startsWith(parentQuery + '/')) {
+                        const childPart = tag.slice(parentQuery.length + 1);
+                        return childPart.toLowerCase().includes(childQuery.toLowerCase());
+                    }
+                    return false;
+                });
+            }
+            else {
+                filteredTags = allTags.filter(tag => {
+                    const tagLower = tag.toLowerCase();
+                    const queryLower = afterHash.toLowerCase();
+                    if (tagLower === queryLower)
+                        return true;
+                    if (tagLower.includes(queryLower))
+                        return true;
+                    const parts = tag.split('/');
+                    if (parts.some(part => part.toLowerCase().includes(queryLower)))
+                        return true;
+                    return false;
+                });
+            }
+            filteredTags.sort((a, b) => {
+                const aDepth = (a.match(/\//g) || []).length;
+                const bDepth = (b.match(/\//g) || []).length;
+                if (aDepth !== bDepth)
+                    return aDepth - bDepth;
+                return a.localeCompare(b);
+            });
+            return filteredTags.slice(0, 5).map((tag, index) => {
+                const suggestion = document.createElement('div');
+                suggestion.className = 'tag-suggestion';
+                suggestion.dataset.index = index.toString();
+                suggestion.dataset.tag = tag;
+                const tagIcon = document.createElement('div');
+                tagIcon.className = 'tag-icon';
+                tagIcon.textContent = '#';
+                const tagInfo = document.createElement('div');
+                tagInfo.className = 'tag-info';
+                const tagName = document.createElement('div');
+                tagName.className = 'tag-name';
+                const displayName = tag.split('/').pop();
+                tagName.textContent = displayName || tag;
+                const tagPath = document.createElement('div');
+                tagPath.className = 'tag-path';
+                tagPath.textContent = tag;
+                tagInfo.appendChild(tagName);
+                tagInfo.appendChild(tagPath);
+                const tagCount = document.createElement('div');
+                tagCount.className = 'tag-count';
+                tagCount.textContent = `${tagCounts[tag] || 0}件`;
+                const kbd = document.createElement('span');
+                kbd.className = 'kbd';
+                kbd.textContent = '↵';
+                suggestion.appendChild(tagIcon);
+                suggestion.appendChild(tagInfo);
+                suggestion.appendChild(tagCount);
+                suggestion.appendChild(kbd);
+                suggestion.addEventListener('mouseenter', () => {
+                    this.state.activeIndex = index;
+                    this.updateActive();
+                });
+                suggestion.addEventListener('mousedown', e => e.preventDefault());
+                suggestion.addEventListener('click', () => {
+                    this.selectTag(tag);
+                });
+                return suggestion;
+            });
+        }
+        /**
+         * タグ候補数を取得
+         */
+        getTagSuggestionsCount() {
+            const rawQuery = this.dom.inputEl?.value || '';
+            if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
+                return 0;
+            }
+            const entries = this.getEntries();
+            const allTags = this.getAllTags(entries);
+            const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
+            let filteredTags = [];
+            if (afterHash.includes('/')) {
+                const parts = afterHash.split('/');
+                const parentQuery = parts.slice(0, -1).join('/');
+                const childQuery = parts[parts.length - 1];
+                filteredTags = allTags.filter(tag => {
+                    if (tag.startsWith(parentQuery + '/')) {
+                        const childPart = tag.slice(parentQuery.length + 1);
+                        return childPart.toLowerCase().includes(childQuery.toLowerCase());
+                    }
+                    return false;
+                });
+            }
+            else {
+                filteredTags = allTags.filter(tag => {
+                    const tagLower = tag.toLowerCase();
+                    const queryLower = afterHash.toLowerCase();
+                    if (tagLower === queryLower)
+                        return true;
+                    if (tagLower.includes(queryLower))
+                        return true;
+                    const parts = tag.split('/');
+                    if (parts.some(part => part.toLowerCase().includes(queryLower)))
+                        return true;
+                    return false;
+                });
+            }
+            return Math.min(filteredTags.length, 5);
+        }
+        /**
+         * すべてのタグを取得
+         */
+        getAllTags(entries) {
+            const tagSet = new Set();
+            entries.forEach(item => {
+                if (item.tags && Array.isArray(item.tags)) {
+                    item.tags.forEach(tag => {
+                        if (tag && typeof tag === 'string' && tag.trim()) {
+                            tagSet.add(tag.trim());
+                        }
+                    });
+                }
+            });
+            return Array.from(tagSet).sort();
+        }
+        /**
+         * タグを選択
+         */
+        selectTag(tag) {
+            const currentValue = this.dom.inputEl.value;
+            const hashIndex = currentValue.indexOf('#');
+            if (hashIndex >= 0) {
+                const beforeHash = currentValue.slice(0, hashIndex);
+                this.dom.inputEl.value = beforeHash + '#' + tag;
+            }
+            else {
+                this.dom.inputEl.value = '#' + tag;
+            }
+            this.dom.inputEl.focus();
+            this.renderList();
         }
         /**
          * 仮想スクロールをセットアップ
@@ -1211,7 +1415,7 @@
          * アクティブなアイテムを更新する
          */
         updateActive() {
-            const items = this.dom.listEl?.querySelectorAll('.item') || [];
+            const items = this.dom.listEl?.querySelectorAll('.item, .tag-suggestion') || [];
             items.forEach((el, idx) => {
                 el.classList.toggle('active', idx === this.state.activeIndex);
             });
@@ -1254,12 +1458,11 @@
             this.handleAutocompleteInput = () => {
                 const value = this.dom.inputEl.value;
                 setTimeout(() => {
-                    if (value.includes(' ')) {
-                        this.hideAutocomplete();
-                        return;
-                    }
                     if (value.includes('#')) {
-                        const afterHash = value.slice(value.indexOf('#') + 1);
+                        const hashIndex = value.indexOf('#');
+                        const afterHash = value.slice(hashIndex + 1);
+                        console.log('[CommandPalette] Autocomplete input - value:', value);
+                        console.log('[CommandPalette] Autocomplete input - afterHash:', afterHash);
                         this.showAutocomplete(afterHash);
                     }
                     else {
@@ -1315,19 +1518,30 @@
             // オートコンプリートのイベントリスナーを追加
             this.dom.inputEl.addEventListener('input', this.handleAutocompleteInput);
             this.dom.inputEl.addEventListener('keydown', this.handleAutocompleteKeydown);
-            this.dom.inputEl.addEventListener('blur', () => {
-                setTimeout(() => this.hideAutocomplete(), 300);
+            // blur 時、実際に外へ出たときだけ閉じる
+            this.dom.inputEl.addEventListener('blur', (e) => {
+                const to = e.relatedTarget;
+                const insideAuto = to && this.dom.autocompleteEl.contains(to);
+                setTimeout(() => {
+                    if (!insideAuto && !this.dom.autocompleteEl.matches(':hover')) {
+                        this.hideAutocomplete();
+                    }
+                }, 0);
             });
+            // オートコンプリート内クリック時にフォーカスを奪われても閉じない
             this.dom.autocompleteEl.addEventListener('mousedown', (e) => {
-                e.preventDefault();
+                e.preventDefault(); // 入力の blur を抑止
+                this.dom.inputEl.focus(); // フォーカスを戻す
             });
         }
         /**
          * オートコンプリートを表示
          */
         showAutocomplete(query) {
-            const allTags = getAllTags();
             const entries = this.getEntries();
+            console.log('[CommandPalette] Autocomplete - entries from storage:', entries);
+            const allTags = getAllTags(entries);
+            console.log('[CommandPalette] Autocomplete - allTags:', allTags);
             const tagCounts = {};
             entries.forEach(entry => {
                 if (entry.tags) {
@@ -1350,7 +1564,29 @@
                 });
             }
             else {
-                filteredTags = allTags.filter(tag => tag.toLowerCase().includes(query.toLowerCase()));
+                filteredTags = allTags.filter(tag => {
+                    // 完全一致または部分一致
+                    const tagLower = tag.toLowerCase();
+                    const queryLower = query.toLowerCase();
+                    console.log(`[CommandPalette] Filtering tag "${tag}" against query "${query}"`);
+                    // 完全一致
+                    if (tagLower === queryLower) {
+                        console.log(`[CommandPalette] Exact match: ${tag}`);
+                        return true;
+                    }
+                    // 部分一致
+                    if (tagLower.includes(queryLower)) {
+                        console.log(`[CommandPalette] Partial match: ${tag}`);
+                        return true;
+                    }
+                    // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
+                    const parts = tag.split('/');
+                    if (parts.some(part => part.toLowerCase().includes(queryLower))) {
+                        console.log(`[CommandPalette] Parent tag match: ${tag}`);
+                        return true;
+                    }
+                    return false;
+                });
             }
             filteredTags.sort((a, b) => {
                 const aDepth = (a.match(/\//g) || []).length;
@@ -1368,13 +1604,32 @@
                 this.state.index = -1;
                 this.state.isVisible = true;
                 this.dom.autocompleteEl.innerHTML = '';
-                const emptyItem = document.createElement('div');
-                emptyItem.className = 'autocomplete-item';
-                emptyItem.textContent = '該当するタグがありません';
-                emptyItem.style.color = 'var(--muted)';
-                emptyItem.style.cursor = 'default';
-                emptyItem.addEventListener('click', (e) => e.preventDefault());
-                this.dom.autocompleteEl.appendChild(emptyItem);
+                // 新規タグ作成を提案
+                const createItem = document.createElement('div');
+                createItem.className = 'autocomplete-item';
+                createItem.style.cursor = 'pointer';
+                createItem.innerHTML = `
+        <span class="autocomplete-tag" style="color: var(--accent-color);">➕ 新規タグを作成: "${escapeHtml(query)}"</span>
+        <div style="font-size: 10px; color: var(--muted); margin-top: 2px;">Enterで作成して続行</div>
+      `;
+                createItem.addEventListener('click', () => {
+                    this.createNewTag(query);
+                });
+                this.dom.autocompleteEl.appendChild(createItem);
+                // デバッグ情報
+                const debugItem = document.createElement('div');
+                debugItem.className = 'autocomplete-item';
+                debugItem.style.color = 'var(--muted)';
+                debugItem.style.fontSize = '11px';
+                debugItem.style.cursor = 'default';
+                debugItem.innerHTML = `
+        <div>デバッグ情報:</div>
+        <div>・全タグ数: ${allTags.length}</div>
+        <div>・検索クエリ: "${escapeHtml(query)}"</div>
+        <div>・サイト数: ${entries.length}</div>
+      `;
+                debugItem.addEventListener('click', (e) => e.preventDefault());
+                this.dom.autocompleteEl.appendChild(debugItem);
                 this.dom.autocompleteEl.style.display = 'block';
                 this.updateAutocompleteActive();
                 return;
@@ -1434,10 +1689,10 @@
             const hashIndex = currentValue.indexOf('#');
             if (hashIndex >= 0) {
                 const beforeHash = currentValue.slice(0, hashIndex);
-                this.dom.inputEl.value = beforeHash + '#' + tag.name + ' ';
+                this.dom.inputEl.value = beforeHash + '#' + tag.name;
             }
             else {
-                this.dom.inputEl.value = '#' + tag.name + ' ';
+                this.dom.inputEl.value = '#' + tag.name;
             }
             this.hideAutocomplete();
             this.dom.inputEl.focus();
@@ -1446,11 +1701,31 @@
             this.onUpdateActive();
         }
         /**
-         * エントリを取得する（暫定実装）
+         * 新規タグを作成
+         */
+        createNewTag(tagName) {
+            const currentValue = this.dom.inputEl.value;
+            const hashIndex = currentValue.indexOf('#');
+            if (hashIndex >= 0) {
+                const beforeHash = currentValue.slice(0, hashIndex);
+                this.dom.inputEl.value = beforeHash + '#' + tagName;
+            }
+            else {
+                this.dom.inputEl.value = '#' + tagName;
+            }
+            this.hideAutocomplete();
+            this.dom.inputEl.focus();
+            // アクティブインデックスをリセットして再レンダリング
+            this.onRenderList();
+            this.onUpdateActive();
+        }
+        /**
+         * エントリを取得する（正規化済み）
          */
         getEntries() {
             try {
-                return window.GM_getValue?.('vm_sites_palette__sites', []) || [];
+                const getSites = require('@/core/storage').getSites;
+                return getSites();
             }
             catch {
                 return [];
@@ -1494,84 +1769,123 @@
          * マネージャを構築
          */
         buildManager() {
-            this.dom.mgrOverlay = document.createElement('div');
-            this.dom.mgrOverlay.className = 'mgr-overlay';
-            this.dom.mgrOverlay.addEventListener('click', e => {
-                if (e.target === this.dom.mgrOverlay)
-                    this.closeManager();
-            });
-            this.dom.mgrBox = document.createElement('div');
-            this.dom.mgrBox.className = 'mgr';
-            this.dom.mgrBox.innerHTML = `
-      <header>
-        <h3>サイトマネージャ</h3>
-        <div>
-          <button class="btn" id="vm-export">エクスポート</button>
-          <button class="btn" id="vm-import">インポート</button>
-          <button class="btn primary" id="vm-save">保存</button>
-          <button class="btn" id="vm-close">閉じる</button>
-        </div>
-      </header>
-      <input type="file" id="vm-import-file" accept="application/json" style="display:none">
-      <div style="padding:10px 14px">
-        <table class="tbl">
-          <thead>
-            <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
-          </thead>
-          <tbody id="vm-rows-sites"></tbody>
-        </table>
-        <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
-      </div>
-      <footer>
-        <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
-        <span class="muted">Ctrl/⌘S で保存、Esc で閉じる</span>
-      </footer>`;
-            this.dom.mgrOverlay.appendChild(this.dom.mgrBox);
-            if (this.dom.root) {
-                this.dom.root.appendChild(this.dom.mgrOverlay);
-            }
-            this.dom.siteBodyEl = this.dom.mgrBox.querySelector('#vm-rows-sites');
-            this.dom.mgrBox.querySelector('#vm-add-site')?.addEventListener('click', () => this.addSiteRow({ name: '', url: '', tags: [] }));
-            this.dom.mgrBox.querySelector('#vm-save')?.addEventListener('click', () => this.saveManager());
-            this.dom.mgrBox.querySelector('#vm-close')?.addEventListener('click', () => this.closeManager());
-            this.dom.mgrBox.querySelector('#vm-export')?.addEventListener('click', () => this.exportSites());
-            const importInput = this.dom.mgrBox.querySelector('#vm-import-file');
-            this.dom.mgrBox.addEventListener('keydown', e => {
-                if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
-                    e.preventDefault();
-                    this.saveManager();
-                }
-                if (e.key === 'Escape') {
-                    e.preventDefault();
-                    this.closeManager();
-                }
-            });
-            this.dom.mgrBox.querySelector('#vm-import')?.addEventListener('click', () => {
-                if (!importInput)
-                    return;
-                importInput.value = '';
-                importInput.click();
-            });
-            if (importInput) {
-                importInput.addEventListener('change', () => {
-                    const file = importInput.files && importInput.files[0];
-                    if (!file)
-                        return;
-                    const reader = new FileReader();
-                    reader.onload = () => {
-                        this.importSitesFromJson(typeof reader.result === 'string' ? reader.result : '');
-                    };
-                    reader.onerror = () => {
-                        showToast('ファイルの読み込みに失敗しました');
-                    };
-                    try {
-                        reader.readAsText(file, 'utf-8');
-                    }
-                    catch (err) {
-                        console.error('[CommandPalette] import read error', err);
-                        showToast('ファイルの読み込みに失敗しました');
-                    }
+            try {
+                this.dom.mgrOverlay = document.createElement('div');
+                this.dom.mgrOverlay.className = 'mgr-overlay';
+                this.dom.mgrOverlay.addEventListener('click', e => {
+                    if (e.target === this.dom.mgrOverlay)
+                        this.closeManager();
                 });
+                this.dom.mgrBox = document.createElement('div');
+                this.dom.mgrBox.className = 'mgr';
+                this.dom.mgrBox.innerHTML = `
+        <header>
+          <h3>サイトマネージャ</h3>
+          <div>
+            <button class="btn" id="vm-export">エクスポート</button>
+            <button class="btn" id="vm-import">インポート</button>
+            <button class="btn primary" id="vm-save">保存</button>
+            <button class="btn" id="vm-close">閉じる</button>
+          </div>
+        </header>
+        <input type="file" id="vm-import-file" accept="application/json" style="display:none">
+        <div style="padding:10px 14px">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
+            </thead>
+            <tbody id="vm-rows-sites"></tbody>
+          </table>
+          <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
+        </div>
+        <footer>
+          <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
+          <span class="muted">Ctrl/⌘S で保存、Esc で閉じる</span>
+        </footer>`;
+                if (this.dom.mgrOverlay && this.dom.mgrBox) {
+                    this.dom.mgrOverlay.appendChild(this.dom.mgrBox);
+                }
+                if (this.dom.root && this.dom.mgrOverlay) {
+                    this.dom.root.appendChild(this.dom.mgrOverlay);
+                }
+                // DOM要素を取得
+                this.dom.siteBodyEl = this.dom.mgrBox.querySelector('#vm-rows-sites');
+                // イベントリスナーを設定
+                this.setupManagerEventListeners();
+            }
+            catch (error) {
+                console.error('[CommandPalette] Error building manager:', error);
+            }
+        }
+        /**
+         * マネージャのイベントリスナーを設定
+         */
+        setupManagerEventListeners() {
+            try {
+                // DOM要素を取得
+                const addSiteBtn = this.dom.mgrBox?.querySelector('#vm-add-site');
+                const saveBtn = this.dom.mgrBox?.querySelector('#vm-save');
+                const closeBtn = this.dom.mgrBox?.querySelector('#vm-close');
+                const exportBtn = this.dom.mgrBox?.querySelector('#vm-export');
+                const importInput = this.dom.mgrBox?.querySelector('#vm-import-file');
+                const importBtn = this.dom.mgrBox?.querySelector('#vm-import');
+                // イベントリスナーを設定
+                if (addSiteBtn) {
+                    addSiteBtn.addEventListener('click', () => this.addSiteRow({ name: '', url: '', tags: [] }));
+                }
+                if (saveBtn) {
+                    saveBtn.addEventListener('click', () => this.saveManager());
+                }
+                if (closeBtn) {
+                    closeBtn.addEventListener('click', () => this.closeManager());
+                }
+                if (exportBtn) {
+                    exportBtn.addEventListener('click', () => this.exportSites());
+                }
+                if (this.dom.mgrBox) {
+                    this.dom.mgrBox.addEventListener('keydown', (e) => {
+                        if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+                            e.preventDefault();
+                            this.saveManager();
+                        }
+                        if (e.key === 'Escape') {
+                            e.preventDefault();
+                            this.closeManager();
+                        }
+                    });
+                }
+                if (importBtn) {
+                    importBtn.addEventListener('click', () => {
+                        if (!importInput)
+                            return;
+                        importInput.value = '';
+                        importInput.click();
+                    });
+                }
+                if (importInput) {
+                    importInput.addEventListener('change', () => {
+                        const file = importInput.files && importInput.files[0];
+                        if (!file)
+                            return;
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                            this.importSitesFromJson(typeof reader.result === 'string' ? reader.result : '');
+                        };
+                        reader.onerror = () => {
+                            showToast('ファイルの読み込みに失敗しました');
+                        };
+                        try {
+                            reader.readAsText(file, 'utf-8');
+                        }
+                        catch (err) {
+                            console.error('[CommandPalette] import read error', err);
+                            showToast('ファイルの読み込みに失敗しました');
+                        }
+                    });
+                }
+            }
+            catch (error) {
+                console.error('[CommandPalette] Error setting up manager event listeners:', error);
             }
         }
         /**
@@ -2165,28 +2479,43 @@
             return regex.test(current);
         });
     };
+    // グローバルホットキーコールバックを保持する変数
+    let globalHotkeyCallback = null;
     /**
      * グローバルキーボードイベントハンドラ
      */
     const onGlobalKeydown = (e) => {
-        // ブロックサイトでは処理しない
-        if (isBlocked())
-            return;
-        // 編集中の要素では処理しない
-        const target = e.target;
-        const tag = (target && target.tagName) || '';
-        const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
-            (target && target.isContentEditable);
-        if (editable)
-            return;
-        const settings = getSettings();
-        // ホットキーをチェック
-        if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
-            e.preventDefault();
-            e.stopPropagation();
-            // パレットを開く処理はmain.tsからインポートする
-            // ここではイベントを阻止するのみ
+        try {
+            // ブロックサイトでは処理しない
+            if (isBlocked())
+                return;
+            // 編集中の要素では処理しない
+            const target = e.target;
+            const tag = (target && target.tagName) || '';
+            const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
+                (target && target.isContentEditable);
+            if (editable)
+                return;
+            const settings = getSettings();
+            // ホットキーをチェック
+            if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+                e.preventDefault();
+                e.stopPropagation();
+                // パレットを開く処理を実行
+                if (globalHotkeyCallback) {
+                    globalHotkeyCallback();
+                }
+            }
         }
+        catch (error) {
+            console.error('[CommandPalette] Global hotkey error:', error);
+        }
+    };
+    /**
+     * グローバルホットキーコールバックを設定する
+     */
+    const setGlobalHotkeyCallback = (callback) => {
+        globalHotkeyCallback = callback;
     };
     /**
      * グローバルホットキーを設定する
@@ -2314,6 +2643,135 @@
             this.onBingSearch = handlers.onBingSearch;
         }
     }
+
+    /**
+     * テスト用のサンプルデータを作成
+     */
+    const createSampleData = () => {
+        return [
+            {
+                id: 'sample-1',
+                type: 'site',
+                name: 'GitHub',
+                url: 'https://github.com',
+                tags: ['development', 'work/project', 'tools']
+            },
+            {
+                id: 'sample-2',
+                type: 'site',
+                name: 'Google',
+                url: 'https://google.com',
+                tags: ['search', 'daily']
+            },
+            {
+                id: 'sample-3',
+                type: 'site',
+                name: 'Stack Overflow',
+                url: 'https://stackoverflow.com',
+                tags: ['development', 'programming', 'help']
+            },
+            {
+                id: 'sample-4',
+                type: 'site',
+                name: 'Reddit',
+                url: 'https://reddit.com',
+                tags: ['social', 'entertainment']
+            },
+            {
+                id: 'sample-5',
+                type: 'site',
+                name: 'YouTube',
+                url: 'https://youtube.com',
+                tags: ['video', 'entertainment', 'learning']
+            },
+            {
+                id: 'sample-6',
+                type: 'site',
+                name: 'MDN Web Docs',
+                url: 'https://developer.mozilla.org',
+                tags: ['development', 'documentation', 'web']
+            },
+            {
+                id: 'sample-7',
+                type: 'site',
+                name: 'Twitter',
+                url: 'https://twitter.com',
+                tags: ['social', 'news']
+            },
+            {
+                id: 'sample-8',
+                type: 'site',
+                name: 'Notion',
+                url: 'https://notion.so',
+                tags: ['productivity', 'work/notes', 'organization']
+            },
+            {
+                id: 'sample-9',
+                type: 'site',
+                name: 'Figma',
+                url: 'https://figma.com',
+                tags: ['design', 'work/tools', 'collaboration']
+            },
+            {
+                id: 'sample-10',
+                type: 'site',
+                name: 'Slack',
+                url: 'https://slack.com',
+                tags: ['communication', 'work/chat', 'team']
+            },
+            {
+                id: 'sample-11',
+                type: 'site',
+                name: 'DeepSeek',
+                url: 'https://deepseek.com',
+                tags: ['ai/deepseek', 'ai/chat', 'platform']
+            },
+            {
+                id: 'sample-12',
+                type: 'site',
+                name: 'ChatGPT',
+                url: 'https://chat.openai.com',
+                tags: ['ai/openai', 'ai/chat', 'platform']
+            },
+            {
+                id: 'sample-13',
+                type: 'site',
+                name: 'Claude',
+                url: 'https://claude.ai',
+                tags: ['ai/anthropic', 'ai/chat', 'platform']
+            },
+            {
+                id: 'sample-14',
+                type: 'site',
+                name: 'Gemini',
+                url: 'https://gemini.google.com',
+                tags: ['ai/gemini', 'ai/chat', 'platform']
+            }
+        ];
+    };
+    /**
+     * サンプルデータをストレージに追加（開発用）
+     */
+    const addSampleData = () => {
+        try {
+            const existing = window.GM_getValue?.('vm_sites_palette__sites', []) || [];
+            const sampleData = createSampleData();
+            // 重複チェック
+            const existingIds = new Set(existing.map((item) => item.id));
+            const newItems = sampleData.filter(item => !existingIds.has(item.id));
+            if (newItems.length > 0) {
+                const updated = [...existing, ...newItems];
+                window.GM_setValue?.('vm_sites_palette__sites', updated);
+                console.log(`[CommandPalette] Added ${newItems.length} sample entries`);
+            }
+            else {
+                console.log('[CommandPalette] Sample data already exists');
+            }
+        }
+        catch (error) {
+            console.error('[CommandPalette] Failed to add sample data:', error);
+        }
+    };
 
     /**
      * アプリケーションメインクラス
@@ -2498,23 +2956,33 @@
          * アプリケーションを初期化する
          */
         bootstrap() {
-            // ストレージを初期化
-            initializeStorage();
-            // 設定を取得
-            this.getSettings();
-            // グローバルホットキーを設定
-            setupGlobalHotkey();
-            // メニューを登録
-            GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
-            GM_registerMenuCommand('設定', () => this.openSettings());
-            GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
-            GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
-            // 自動オープンをチェック
-            if (shouldAutoOpen()) {
-                setTimeout(() => this.openPalette(), 120);
+            try {
+                // ストレージを初期化
+                initializeStorage();
+                // 設定を取得
+                const settings = this.getSettings();
+                // グローバルホットキーコールバックを設定
+                setGlobalHotkeyCallback(() => this.openPalette());
+                // グローバルホットキーを設定
+                setupGlobalHotkey(settings);
+                // メニューを登録
+                if (typeof GM_registerMenuCommand === 'function') {
+                    GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
+                    GM_registerMenuCommand('設定', () => this.openSettings());
+                    GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
+                    GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
+                    GM_registerMenuCommand('サンプルデータを追加', () => addSampleData());
+                }
+                // 自動オープンをチェック
+                if (shouldAutoOpen()) {
+                    setTimeout(() => this.openPalette(), 120);
+                }
+                // 二重ハンドラを削除（main.tsのハンドラは不要になった）
+                window.removeEventListener('keydown', this.updateHotkeyHandler, true);
             }
-            // ホットキーハンドラを更新
-            window.addEventListener('keydown', this.updateHotkeyHandler, true);
+            catch (error) {
+                console.error('[CommandPalette] Bootstrap error:', error);
+            }
         }
     }
     // アプリケーションを起動

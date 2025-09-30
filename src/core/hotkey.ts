@@ -39,30 +39,46 @@ export const shouldAutoOpen = (): boolean => {
   });
 };
 
+// グローバルホットキーコールバックを保持する変数
+let globalHotkeyCallback: (() => void) | null = null;
+
 /**
  * グローバルキーボードイベントハンドラ
  */
 export const onGlobalKeydown = (e: KeyboardEvent): void => {
-  // ブロックサイトでは処理しない
-  if (isBlocked()) return;
-  
-  // 編集中の要素では処理しない
-  const target = e.target as HTMLElement | null;
-  const tag = (target && target.tagName) || '';
-  const editable = ['INPUT', 'TEXTAREA'].includes(tag) || 
-                   (target && target.isContentEditable);
-  if (editable) return;
-  
-  const settings = getSettings();
-  
-  // ホットキーをチェック
-  if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
-    e.preventDefault();
-    e.stopPropagation();
+  try {
+    // ブロックサイトでは処理しない
+    if (isBlocked()) return;
     
-    // パレットを開く処理はmain.tsからインポートする
-    // ここではイベントを阻止するのみ
+    // 編集中の要素では処理しない
+    const target = e.target as HTMLElement | null;
+    const tag = (target && target.tagName) || '';
+    const editable = ['INPUT', 'TEXTAREA'].includes(tag) || 
+                     (target && target.isContentEditable);
+    if (editable) return;
+    
+    const settings = getSettings();
+    
+    // ホットキーをチェック
+    if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // パレットを開く処理を実行
+      if (globalHotkeyCallback) {
+        globalHotkeyCallback();
+      }
+    }
+  } catch (error) {
+    console.error('[CommandPalette] Global hotkey error:', error);
   }
+};
+
+/**
+ * グローバルホットキーコールバックを設定する
+ */
+export const setGlobalHotkeyCallback = (callback: () => void): void => {
+  globalHotkeyCallback = callback;
 };
 
 /**

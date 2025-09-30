@@ -6,8 +6,9 @@ import { Manager } from '@/components/manager';
 import { SettingsUI } from '@/components/settings';
 import { PaletteCore } from '@/core/palette';
 import { KeyboardHandler } from '@/core/keyboard';
-import { setupGlobalHotkey, shouldAutoOpen } from '@/core/hotkey';
+import { setupGlobalHotkey, shouldAutoOpen, setGlobalHotkeyCallback } from '@/core/hotkey';
 import { initializeStorage, getSites, setSites, pruneUsage } from '@/core/storage';
+import { addSampleData } from '@/utils/test-data';
 import { defaultSettings } from '@/constants';
 
 // GM_* APIのグローバル宣言
@@ -238,28 +239,38 @@ class CommandPaletteApp {
    * アプリケーションを初期化する
    */
   bootstrap(): void {
-    // ストレージを初期化
-    initializeStorage();
-    
-    // 設定を取得
-    const settings = this.getSettings();
-    
-    // グローバルホットキーを設定
-    setupGlobalHotkey(settings);
-    
-    // メニューを登録
-    GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
-    GM_registerMenuCommand('設定', () => this.openSettings());
-    GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
-    GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
-    
-    // 自動オープンをチェック
-    if (shouldAutoOpen()) {
-      setTimeout(() => this.openPalette(), 120);
+    try {
+      // ストレージを初期化
+      initializeStorage();
+      
+      // 設定を取得
+      const settings = this.getSettings();
+      
+      // グローバルホットキーコールバックを設定
+      setGlobalHotkeyCallback(() => this.openPalette());
+      
+      // グローバルホットキーを設定
+      setupGlobalHotkey(settings);
+      
+      // メニューを登録
+      if (typeof GM_registerMenuCommand === 'function') {
+        GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
+        GM_registerMenuCommand('設定', () => this.openSettings());
+        GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
+        GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
+        GM_registerMenuCommand('サンプルデータを追加', () => addSampleData());
+      }
+      
+      // 自動オープンをチェック
+      if (shouldAutoOpen()) {
+        setTimeout(() => this.openPalette(), 120);
+      }
+      
+      // 二重ハンドラを削除（main.tsのハンドラは不要になった）
+      window.removeEventListener('keydown', this.updateHotkeyHandler, true);
+    } catch (error) {
+      console.error('[CommandPalette] Bootstrap error:', error);
     }
-    
-    // ホットキーハンドラを更新
-    window.addEventListener('keydown', this.updateHotkeyHandler, true);
   }
 }
 

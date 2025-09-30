@@ -23,89 +23,132 @@ export class Manager {
    * マネージャを構築
    */
   buildManager(): void {
-    this.dom.mgrOverlay = document.createElement('div');
-    this.dom.mgrOverlay.className = 'mgr-overlay';
-    this.dom.mgrOverlay.addEventListener('click', e => { 
-      if (e.target === this.dom.mgrOverlay) this.closeManager(); 
-    });
-
-    this.dom.mgrBox = document.createElement('div');
-    this.dom.mgrBox.className = 'mgr';
-    this.dom.mgrBox.innerHTML = `
-      <header>
-        <h3>サイトマネージャ</h3>
-        <div>
-          <button class="btn" id="vm-export">エクスポート</button>
-          <button class="btn" id="vm-import">インポート</button>
-          <button class="btn primary" id="vm-save">保存</button>
-          <button class="btn" id="vm-close">閉じる</button>
-        </div>
-      </header>
-      <input type="file" id="vm-import-file" accept="application/json" style="display:none">
-      <div style="padding:10px 14px">
-        <table class="tbl">
-          <thead>
-            <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
-          </thead>
-          <tbody id="vm-rows-sites"></tbody>
-        </table>
-        <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
-      </div>
-      <footer>
-        <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
-        <span class="muted">Ctrl/⌘S で保存、Esc で閉じる</span>
-      </footer>`;
-
-    this.dom.mgrOverlay.appendChild(this.dom.mgrBox);
-    if (this.dom.root) {
-      this.dom.root.appendChild(this.dom.mgrOverlay);
-    }
-
-    this.dom.siteBodyEl = this.dom.mgrBox.querySelector('#vm-rows-sites') as HTMLTableSectionElement;
-
-    this.dom.mgrBox.querySelector('#vm-add-site')?.addEventListener('click', () => 
-      this.addSiteRow({ name:'', url:'', tags:[] })
-    );
-    this.dom.mgrBox.querySelector('#vm-save')?.addEventListener('click', () => this.saveManager());
-    this.dom.mgrBox.querySelector('#vm-close')?.addEventListener('click', () => this.closeManager());
-    this.dom.mgrBox.querySelector('#vm-export')?.addEventListener('click', () => this.exportSites());
-    
-    const importInput = this.dom.mgrBox.querySelector('#vm-import-file') as HTMLInputElement;
-    this.dom.mgrBox.addEventListener('keydown', e => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { 
-        e.preventDefault(); 
-        this.saveManager(); 
-      }
-      if (e.key === 'Escape') { 
-        e.preventDefault(); 
-        this.closeManager(); 
-      }
-    });
-    
-    this.dom.mgrBox.querySelector('#vm-import')?.addEventListener('click', () => {
-      if (!importInput) return;
-      importInput.value = '';
-      importInput.click();
-    });
-    
-    if (importInput) {
-      importInput.addEventListener('change', () => {
-        const file = importInput.files && importInput.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          this.importSitesFromJson(typeof reader.result === 'string' ? reader.result : '');
-        };
-        reader.onerror = () => {
-          showToast('ファイルの読み込みに失敗しました');
-        };
-        try {
-          reader.readAsText(file, 'utf-8');
-        } catch (err) {
-          console.error('[CommandPalette] import read error', err);
-          showToast('ファイルの読み込みに失敗しました');
-        }
+    try {
+      this.dom.mgrOverlay = document.createElement('div');
+      this.dom.mgrOverlay.className = 'mgr-overlay';
+      this.dom.mgrOverlay.addEventListener('click', e => { 
+        if (e.target === this.dom.mgrOverlay) this.closeManager(); 
       });
+
+      this.dom.mgrBox = document.createElement('div');
+      this.dom.mgrBox.className = 'mgr';
+      this.dom.mgrBox.innerHTML = `
+        <header>
+          <h3>サイトマネージャ</h3>
+          <div>
+            <button class="btn" id="vm-export">エクスポート</button>
+            <button class="btn" id="vm-import">インポート</button>
+            <button class="btn primary" id="vm-save">保存</button>
+            <button class="btn" id="vm-close">閉じる</button>
+          </div>
+        </header>
+        <input type="file" id="vm-import-file" accept="application/json" style="display:none">
+        <div style="padding:10px 14px">
+          <table class="tbl">
+            <thead>
+              <tr><th style="width:36px"></th><th>名前</th><th>URL</th><th>タグ</th><th style="width:220px">操作</th></tr>
+            </thead>
+            <tbody id="vm-rows-sites"></tbody>
+          </table>
+          <div style="padding:12px 0"><button class="btn" id="vm-add-site">行を追加</button></div>
+        </div>
+        <footer>
+          <span class="muted">上下ボタンで並べ替え。保存すると即時反映。</span>
+          <span class="muted">Ctrl/⌘S で保存、Esc で閉じる</span>
+        </footer>`;
+
+      if (this.dom.mgrOverlay && this.dom.mgrBox) {
+        this.dom.mgrOverlay.appendChild(this.dom.mgrBox);
+      }
+      
+      if (this.dom.root && this.dom.mgrOverlay) {
+        this.dom.root.appendChild(this.dom.mgrOverlay);
+      }
+
+      // DOM要素を取得
+      this.dom.siteBodyEl = this.dom.mgrBox.querySelector('#vm-rows-sites') as HTMLTableSectionElement;
+
+      // イベントリスナーを設定
+      this.setupManagerEventListeners();
+    } catch (error) {
+      console.error('[CommandPalette] Error building manager:', error);
+    }
+  }
+
+  /**
+   * マネージャのイベントリスナーを設定
+   */
+  private setupManagerEventListeners(): void {
+    try {
+      // DOM要素を取得
+      const addSiteBtn = this.dom.mgrBox?.querySelector('#vm-add-site');
+      const saveBtn = this.dom.mgrBox?.querySelector('#vm-save');
+      const closeBtn = this.dom.mgrBox?.querySelector('#vm-close');
+      const exportBtn = this.dom.mgrBox?.querySelector('#vm-export');
+      const importInput = this.dom.mgrBox?.querySelector('#vm-import-file') as HTMLInputElement;
+      const importBtn = this.dom.mgrBox?.querySelector('#vm-import');
+
+      // イベントリスナーを設定
+      if (addSiteBtn) {
+        addSiteBtn.addEventListener('click', () => 
+          this.addSiteRow({ name:'', url:'', tags:[] })
+        );
+      }
+      
+      if (saveBtn) {
+        saveBtn.addEventListener('click', () => this.saveManager());
+      }
+      
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => this.closeManager());
+      }
+      
+      if (exportBtn) {
+        exportBtn.addEventListener('click', () => this.exportSites());
+      }
+      
+      if (this.dom.mgrBox) {
+        this.dom.mgrBox.addEventListener('keydown', (e: KeyboardEvent) => {
+          if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') { 
+            e.preventDefault(); 
+            this.saveManager(); 
+          }
+          if (e.key === 'Escape') { 
+            e.preventDefault(); 
+            this.closeManager(); 
+          }
+        });
+      }
+      
+      if (importBtn) {
+        importBtn.addEventListener('click', () => {
+          if (!importInput) return;
+          importInput.value = '';
+          importInput.click();
+        });
+      }
+      
+      if (importInput) {
+        importInput.addEventListener('change', () => {
+          const file = importInput.files && importInput.files[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = () => {
+            this.importSitesFromJson(typeof reader.result === 'string' ? reader.result : '');
+          };
+          reader.onerror = () => {
+            showToast('ファイルの読み込みに失敗しました');
+          };
+          try {
+            reader.readAsText(file, 'utf-8');
+          } catch (err) {
+            console.error('[CommandPalette] import read error', err);
+            showToast('ファイルの読み込みに失敗しました');
+          }
+        });
+      }
+    } catch (error) {
+      console.error('[CommandPalette] Error setting up manager event listeners:', error);
     }
   }
 

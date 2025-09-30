@@ -1,5 +1,6 @@
 import { SiteEntry } from '@/types';
 import { normalize } from './string';
+import { getSites } from '@/core/storage';
 
 /**
  * タグフィルタを抽出する
@@ -18,17 +19,49 @@ export const extractTagFilter = (query: string): { tagFilter: string | null; tex
  * すべてのタグを取得する
  */
 export const getAllTags = (entries: SiteEntry[] = []): string[] => {
+  // 省略時はストレージから取得
+  if (!entries || entries.length === 0) {
+    try {
+      entries = getSites();
+    } catch (_) {
+      entries = [];
+    }
+  }
+  
   const tagSet = new Set<string>();
-  entries.forEach(item => {
+  
+  // デバッグ情報
+  console.log('[CommandPalette] getAllTags - entries count:', entries.length);
+  console.log('[CommandPalette] getAllTags - entries:', entries);
+  
+  entries.forEach((item, index) => {
+    console.log(`[CommandPalette] Processing entry ${index}:`, {
+      id: item.id,
+      name: item.name,
+      tags: item.tags,
+      tagsType: typeof item.tags,
+      tagsIsArray: Array.isArray(item.tags)
+    });
+    
     if (item.tags && Array.isArray(item.tags)) {
-      item.tags.forEach(tag => {
-        if (tag && tag.trim()) {
-          tagSet.add(tag.trim());
+      item.tags.forEach((tag, tagIndex) => {
+        console.log(`[CommandPalette] Processing tag ${tagIndex}:`, tag);
+        if (tag && typeof tag === 'string' && tag.trim()) {
+          const cleanTag = tag.trim();
+          tagSet.add(cleanTag);
+          console.log(`[CommandPalette] Added tag: "${cleanTag}"`);
+        } else {
+          console.log(`[CommandPalette] Skipped invalid tag:`, tag);
         }
       });
+    } else {
+      console.log(`[CommandPalette] Entry ${index} has no valid tags array`);
     }
   });
-  return Array.from(tagSet).sort();
+  
+  const result = Array.from(tagSet).sort();
+  console.log('[CommandPalette] getAllTags - final tags:', result);
+  return result;
 };
 
 /**
