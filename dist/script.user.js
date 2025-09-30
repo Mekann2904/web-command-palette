@@ -909,6 +909,112 @@
             inputEl.focus(); // フォーカスを戻す
         });
     };
+    /**
+     * フォーカストラップを作成する
+     * 指定されたコンテナ内にフォーカスを制限する
+     */
+    const createFocusTrap = (container) => {
+        let isActive = false;
+        let previousActiveElement = null;
+        let keydownHandler = null;
+        /**
+         * コンテナ内のフォーカス可能な要素を取得する
+         */
+        const getFocusableElements = () => {
+            const focusableSelectors = [
+                'button:not([disabled])',
+                'input:not([disabled])',
+                'select:not([disabled])',
+                'textarea:not([disabled])',
+                'a[href]',
+                '[tabindex]:not([tabindex="-1"])',
+                '[contenteditable="true"]'
+            ].join(', ');
+            const elements = Array.from(container.querySelectorAll(focusableSelectors));
+            // tabindex順にソート
+            return elements.sort((a, b) => {
+                const aIndex = parseInt(a.getAttribute('tabindex') || '0');
+                const bIndex = parseInt(b.getAttribute('tabindex') || '0');
+                return aIndex - bIndex;
+            });
+        };
+        /**
+         * 最初のフォーカス可能な要素にフォーカスを設定
+         */
+        const focusFirstElement = () => {
+            const focusableElements = getFocusableElements();
+            if (focusableElements.length > 0) {
+                focusableElements[0].focus();
+            }
+        };
+        /**
+         * キーダウンイベントハンドラ
+         */
+        const handleKeydown = (e) => {
+            if (e.key !== 'Tab')
+                return;
+            const focusableElements = getFocusableElements();
+            if (focusableElements.length === 0)
+                return;
+            const currentElement = document.activeElement;
+            const currentIndex = focusableElements.indexOf(currentElement);
+            let targetIndex;
+            if (e.shiftKey) {
+                // Shift+Tab: 前の要素へ
+                targetIndex = currentIndex <= 0 ? focusableElements.length - 1 : currentIndex - 1;
+            }
+            else {
+                // Tab: 次の要素へ
+                targetIndex = currentIndex >= focusableElements.length - 1 ? 0 : currentIndex + 1;
+            }
+            e.preventDefault();
+            focusableElements[targetIndex].focus();
+        };
+        /**
+         * フォーカストラップを有効化
+         */
+        const activate = () => {
+            if (isActive)
+                return;
+            isActive = true;
+            previousActiveElement = document.activeElement;
+            // キーダウンイベントリスナーを追加
+            keydownHandler = handleKeydown;
+            container.addEventListener('keydown', keydownHandler, true);
+            // 最初の要素にフォーカス
+            setTimeout(() => focusFirstElement(), 0);
+        };
+        /**
+         * フォーカストラップを無効化
+         */
+        const deactivate = () => {
+            if (!isActive)
+                return;
+            isActive = false;
+            // キーダウンイベントリスナーを削除
+            if (keydownHandler) {
+                container.removeEventListener('keydown', keydownHandler, true);
+                keydownHandler = null;
+            }
+            // 以前の要素にフォーカスを戻す
+            if (previousActiveElement) {
+                setTimeout(() => {
+                    if (previousActiveElement) {
+                        previousActiveElement.focus();
+                    }
+                }, 0);
+            }
+        };
+        /**
+         * フォーカストラップが有効かどうかを返す
+         */
+        const isTrapActive = () => isActive;
+        return {
+            activate,
+            deactivate,
+            isActive: isTrapActive
+        };
+    };
 
     /**
      * タイミング関連のユーティリティ関数
@@ -941,6 +1047,7 @@
             this.virtualScrollContainer = null;
             this.virtualScrollContent = null;
             this.VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
+            this.focusTrap = null;
             this.state = state;
             this.dom = dom;
             this.onExecuteEntry = onExecuteEntry;
@@ -977,6 +1084,8 @@
             this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
             this.state.activeIndex = 0;
             this.renderList();
+            // フォーカストラップを有効化
+            this.activateFocusTrap();
             setFocusTimeout(() => this.dom.inputEl.focus());
         }
         /**
@@ -984,6 +1093,8 @@
          */
         hidePalette() {
             this.state.isOpen = false;
+            // フォーカストラップを無効化
+            this.deactivateFocusTrap();
             if (!this.dom.overlayEl)
                 return;
             this.dom.overlayEl.classList.remove('visible');
@@ -1062,7 +1173,7 @@
                 this.dom.hintLeftSpan = document.createElement('span');
                 this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
                 const rightSpan = document.createElement('span');
-                rightSpan.innerHTML = '<span class="link" id="vm-open-manager">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings">設定</span> · ⌘P / Ctrl+P';
+                rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
                 // nullチェックを追加
                 if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
                     this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
@@ -1531,6 +1642,7 @@
             const item = document.createElement('div');
             item.className = 'item';
             item.dataset.index = index.toString();
+            item.setAttribute('tabindex', '0'); // フォーカス可能にする
             addMouseEnterListener(item, () => {
                 this.state.activeIndex = index;
                 this.updateActive();
@@ -1538,6 +1650,13 @@
             addMouseDownListener(item, e => e.preventDefault());
             addClickListener(item, () => {
                 this.openItem(entry, false);
+            });
+            // キーボードイベントを追加
+            item.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    this.openItem(entry, false);
+                }
             });
             const icon = createFaviconEl(entry);
             const left = document.createElement('div');
@@ -1603,6 +1722,29 @@
             }
             catch {
                 return {};
+            }
+        }
+        /**
+         * フォーカストラップを有効化
+         */
+        activateFocusTrap() {
+            if (!this.dom.overlayEl)
+                return;
+            // 既存のフォーカストラップがあれば無効化
+            if (this.focusTrap) {
+                this.focusTrap.deactivate();
+            }
+            // 新しいフォーカストラップを作成して有効化
+            this.focusTrap = createFocusTrap(this.dom.overlayEl);
+            this.focusTrap.activate();
+        }
+        /**
+         * フォーカストラップを無効化
+         */
+        deactivateFocusTrap() {
+            if (this.focusTrap) {
+                this.focusTrap.deactivate();
+                this.focusTrap = null;
             }
         }
     }
@@ -3267,6 +3409,14 @@
     };
     // グローバルホットキーコールバックを保持する変数
     let globalHotkeyCallback = null;
+    // パレットが開いているかどうかを追跡する変数
+    let isPaletteOpen = false;
+    /**
+     * パレットの開閉状態を設定する
+     */
+    const setPaletteOpenState = (isOpen) => {
+        isPaletteOpen = isOpen;
+    };
     /**
      * グローバルキーボードイベントハンドラ
      */
@@ -3275,11 +3425,75 @@
             // ブロックサイトでは処理しない
             if (isBlocked())
                 return;
+            // デバッグログ
+            if (isPaletteOpen) {
+                console.log('[Debug] Global keydown:', {
+                    key: e.key,
+                    code: e.code,
+                    target: e.target,
+                    targetTagName: e.target?.tagName,
+                    targetClassName: e.target?.className,
+                    isComposing: e.isComposing,
+                    keyCode: e.keyCode
+                });
+            }
+            // パレットが開いている場合は、特定のキー以外は無視
+            if (isPaletteOpen) {
+                // パレット内の要素からのイベントかチェック
+                const target = e.target;
+                const isInPalette = target && (target.closest('#vm-cmd-palette-host') ||
+                    target.closest('.overlay') ||
+                    target.closest('.panel') ||
+                    // Shadow DOM内の要素もチェック
+                    (target.getRootNode() instanceof ShadowRoot &&
+                        target.getRootNode().host?.closest('#vm-cmd-palette-host')));
+                console.log('[Debug] Is in palette:', isInPalette, 'Target:', target);
+                // パレット内からのイベントでない場合は無視
+                if (!isInPalette) {
+                    // Escキーは常に許可（パネルを閉じるため）
+                    if (e.key === 'Escape') {
+                        return; // Escキーは許可
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                // パレット内の入力フィールドの場合は、ほぼすべてのキーを許可
+                const inputTarget = e.target;
+                const isInputField = inputTarget && (inputTarget.tagName === 'INPUT' ||
+                    inputTarget.tagName === 'TEXTAREA' ||
+                    inputTarget.contentEditable === 'true');
+                console.log('[Debug] Is input field:', isInputField);
+                // 入力フィールド内では基本的にすべてのキーを許可
+                if (isInputField) {
+                    console.log('[Debug] Allowing key in input field');
+                    // 入力フィールド内では何も制限しない
+                    return;
+                }
+                // 入力フィールド以外のパネル内要素では、特定のキーのみ許可
+                const allowedKeys = [
+                    'Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown',
+                    'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete',
+                    'Home', 'End', 'PageUp', 'PageDown', ' '
+                ];
+                // 修飾キーのみの場合は許可
+                if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) {
+                    return;
+                }
+                // 許可されたキーでない場合は無視
+                if (!allowedKeys.includes(e.key)) {
+                    console.log('[Debug] Blocking key:', e.key);
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+                return; // パレットが開いている場合はここで処理終了
+            }
             // 編集中の要素では処理しない
-            const target = e.target;
-            const tag = (target && target.tagName) || '';
+            const mainTarget = e.target;
+            const tag = (mainTarget && mainTarget.tagName) || '';
             const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
-                (target && target.isContentEditable);
+                (mainTarget && mainTarget.isContentEditable);
             if (editable)
                 return;
             const settings = getSettings();
@@ -3309,8 +3523,8 @@
     const setupGlobalHotkey = (settings) => {
         // 既存のリスナーを削除
         window.removeEventListener('keydown', onGlobalKeydown, true);
-        // 新しいリスナーを追加
-        window.addEventListener('keydown', onGlobalKeydown, true);
+        // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
+        window.addEventListener('keydown', onGlobalKeydown, false);
     };
 
     /**
@@ -3597,6 +3811,7 @@
          * パレットを開く
          */
         openPalette() {
+            setPaletteOpenState(true);
             this.palette.openPalette();
             this.setupEventListeners();
         }
@@ -3604,6 +3819,7 @@
          * パレットを閉じる
          */
         hidePalette() {
+            setPaletteOpenState(false);
             this.palette.hidePalette();
         }
         /**
@@ -3665,9 +3881,16 @@
             });
             // 入力イベント
             this.dom.inputEl.addEventListener('keydown', (e) => {
+                // 入力フィールド内のキーイベントは優先的に処理
+                console.log('[Debug] Input keydown:', e.key, e.target);
                 this.state.activeIndex = this.keyboardHandler.onInputKey(e, this.state.currentItems, this.state.activeIndex, this.dom.inputEl, this.autocompleteState.isVisible);
             });
             this.dom.inputEl.addEventListener('input', () => this.renderList());
+            // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
+            this.dom.inputEl.addEventListener('keydown', (e) => {
+                // 入力フィールド内ではすべてのキーを許可
+                e.stopPropagation();
+            }, true);
             // ヒントエリアのクリックイベント
             this.dom.hintEl.addEventListener('click', (e) => {
                 const target = e.target;

@@ -69,6 +69,16 @@ export const shouldAutoOpen = (): boolean => {
 // グローバルホットキーコールバックを保持する変数
 let globalHotkeyCallback: (() => void) | null = null;
 
+// パレットが開いているかどうかを追跡する変数
+let isPaletteOpen = false;
+
+/**
+ * パレットの開閉状態を設定する
+ */
+export const setPaletteOpenState = (isOpen: boolean): void => {
+  isPaletteOpen = isOpen;
+};
+
 /**
  * グローバルキーボードイベントハンドラ
  */
@@ -77,11 +87,87 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
     // ブロックサイトでは処理しない
     if (isBlocked()) return;
     
+    // デバッグログ
+    if (isPaletteOpen) {
+      console.log('[Debug] Global keydown:', {
+        key: e.key,
+        code: e.code,
+        target: e.target,
+        targetTagName: (e.target as HTMLElement)?.tagName,
+        targetClassName: (e.target as HTMLElement)?.className,
+        isComposing: e.isComposing,
+        keyCode: e.keyCode
+      });
+    }
+    
+    // パレットが開いている場合は、特定のキー以外は無視
+    if (isPaletteOpen) {
+      // パレット内の要素からのイベントかチェック
+      const target = e.target as HTMLElement | null;
+      const isInPalette = target && (
+        target.closest('#vm-cmd-palette-host') ||
+        target.closest('.overlay') ||
+        target.closest('.panel')
+      );
+      
+      console.log('[Debug] Is in palette:', isInPalette, 'Target:', target);
+      
+      // パレット内からのイベントでない場合は無視
+      if (!isInPalette) {
+        // Escキーは常に許可（パネルを閉じるため）
+        if (e.key === 'Escape') {
+          return; // Escキーは許可
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      
+      // パレット内の入力フィールドの場合は、ほぼすべてのキーを許可
+      const inputTarget = e.target as HTMLElement | null;
+      const isInputField = inputTarget && (
+        inputTarget.tagName === 'INPUT' ||
+        inputTarget.tagName === 'TEXTAREA' ||
+        inputTarget.contentEditable === 'true'
+      );
+      
+      console.log('[Debug] Is input field:', isInputField);
+      
+      // 入力フィールド内では基本的にすべてのキーを許可
+      if (isInputField) {
+        console.log('[Debug] Allowing key in input field');
+        // 入力フィールド内では何も制限しない
+        return;
+      }
+      
+      // 入力フィールド以外のパネル内要素では、特定のキーのみ許可
+      const allowedKeys = [
+        'Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown',
+        'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete',
+        'Home', 'End', 'PageUp', 'PageDown', ' '
+      ];
+      
+      // 修飾キーのみの場合は許可
+      if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) {
+        return;
+      }
+      
+      // 許可されたキーでない場合は無視
+      if (!allowedKeys.includes(e.key)) {
+        console.log('[Debug] Blocking key:', e.key);
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      
+      return; // パレットが開いている場合はここで処理終了
+    }
+    
     // 編集中の要素では処理しない
-    const target = e.target as HTMLElement | null;
-    const tag = (target && target.tagName) || '';
-    const editable = ['INPUT', 'TEXTAREA'].includes(tag) || 
-                     (target && target.isContentEditable);
+    const mainTarget = e.target as HTMLElement | null;
+    const tag = (mainTarget && mainTarget.tagName) || '';
+    const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
+                     (mainTarget && mainTarget.isContentEditable);
     if (editable) return;
     
     const settings = getSettings();
@@ -114,6 +200,6 @@ export const setGlobalHotkeyCallback = (callback: () => void): void => {
 export const setupGlobalHotkey = (settings: Settings): void => {
   // 既存のリスナーを削除
   window.removeEventListener('keydown', onGlobalKeydown, true);
-  // 新しいリスナーを追加
-  window.addEventListener('keydown', onGlobalKeydown, true);
+  // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
+  window.addEventListener('keydown', onGlobalKeydown, false);
 };

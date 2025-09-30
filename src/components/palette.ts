@@ -8,7 +8,7 @@ import { escapeHtml, normalize } from '@/utils/string';
 import { debounce } from '@/utils/debounce';
 import { fadeIn, fadeOut, slideInFromTop, scaleIn } from '@/utils/animations';
 import { VirtualScrollManager, VirtualScrollItem, createVirtualScrollContainer } from '@/utils/virtual-scroll';
-import { addClickListener, addMouseEnterListener, addMouseDownListener, addKeydownListener } from '@/utils/events';
+import { addClickListener, addMouseEnterListener, addMouseDownListener, addKeydownListener, createFocusTrap, FocusTrap } from '@/utils/events';
 import { setFocusTimeout, addInputSpace } from '@/utils/timing';
 import { sortTagsByHierarchy } from '@/utils/tag-sort';
 
@@ -24,6 +24,7 @@ export class Palette {
   private virtualScrollContainer: HTMLElement | null = null;
   private virtualScrollContent: HTMLElement | null = null;
   private readonly VIRTUAL_SCROLL_THRESHOLD = 50; // 50アイテム以上で仮想スクロールを有効化
+  private focusTrap: FocusTrap | null = null;
 
   constructor(state: AppState, dom: DOMElements, onExecuteEntry: (item: SiteEntry, shiftPressed: boolean) => void) {
     this.state = state;
@@ -70,6 +71,9 @@ export class Palette {
     this.state.activeIndex = 0;
     this.renderList();
     
+    // フォーカストラップを有効化
+    this.activateFocusTrap();
+    
     setFocusTimeout(() => this.dom.inputEl!.focus());
   }
 
@@ -78,6 +82,10 @@ export class Palette {
    */
   hidePalette(): void {
     this.state.isOpen = false;
+    
+    // フォーカストラップを無効化
+    this.deactivateFocusTrap();
+    
     if (!this.dom.overlayEl) return;
     
     this.dom.overlayEl.classList.remove('visible');
@@ -164,7 +172,7 @@ export class Palette {
       this.dom.hintLeftSpan = document.createElement('span');
       this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
       const rightSpan = document.createElement('span');
-      rightSpan.innerHTML = '<span class="link" id="vm-open-manager">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings">設定</span> · ⌘P / Ctrl+P';
+      rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
       
       // nullチェックを追加
       if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
@@ -665,6 +673,7 @@ export class Palette {
     const item = document.createElement('div');
     item.className = 'item';
     item.dataset.index = index.toString();
+    item.setAttribute('tabindex', '0'); // フォーカス可能にする
     
     addMouseEnterListener(item, () => {
       this.state.activeIndex = index;
@@ -674,6 +683,14 @@ export class Palette {
     addMouseDownListener(item, e => e.preventDefault());
     addClickListener(item, () => {
       this.openItem(entry, false);
+    });
+    
+    // キーボードイベントを追加
+    item.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        this.openItem(entry, false);
+      }
     });
 
     const icon = createFaviconEl(entry);
@@ -750,6 +767,32 @@ export class Palette {
       return (window as any).GM_getValue?.('vm_sites_palette__usage_v1', {}) || {};
     } catch {
       return {};
+    }
+  }
+
+  /**
+   * フォーカストラップを有効化
+   */
+  private activateFocusTrap(): void {
+    if (!this.dom.overlayEl) return;
+    
+    // 既存のフォーカストラップがあれば無効化
+    if (this.focusTrap) {
+      this.focusTrap.deactivate();
+    }
+    
+    // 新しいフォーカストラップを作成して有効化
+    this.focusTrap = createFocusTrap(this.dom.overlayEl);
+    this.focusTrap.activate();
+  }
+
+  /**
+   * フォーカストラップを無効化
+   */
+  private deactivateFocusTrap(): void {
+    if (this.focusTrap) {
+      this.focusTrap.deactivate();
+      this.focusTrap = null;
     }
   }
 }

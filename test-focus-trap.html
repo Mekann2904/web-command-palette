@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>フォーカストラップテスト</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        button, input, select, textarea {
+            margin: 5px;
+            padding: 8px 12px;
+        }
+        .instructions {
+            background-color: #f0f8ff;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .focus-indicator {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #333;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <h1>フォーカストラップテストページ</h1>
+    
+    <div class="instructions">
+        <h2>テスト手順</h2>
+        <ol>
+            <li>Ctrl+P または ⌘P を押してコマンドパレットを開く</li>
+            <li>Tabキーを押してフォーカスがパネル内で循環することを確認</li>
+            <li>Escキーでパネルを閉じる</li>
+            <li>パネル外の要素にフォーカスが戻ることを確認</li>
+            <li>パネル開いているときに、その他のキー入力が無効化されることを確認</li>
+        </ol>
+    </div>
+
+    <div class="focus-indicator" id="focusIndicator">フォーカス要素: <span id="focusedElement">なし</span></div>
+
+    <div class="test-section">
+        <h2>テスト用フォーム要素</h2>
+        <p>これらの要素はパネルが閉じているときのみ操作できます</p>
+        
+        <label for="testInput1">入力フィールド1:</label>
+        <input type="text" id="testInput1" placeholder="ここにテキストを入力">
+        
+        <label for="testSelect1">セレクトボックス:</label>
+        <select id="testSelect1">
+            <option>オプション1</option>
+            <option>オプション2</option>
+            <option>オプション3</option>
+        </select>
+        
+        <br><br>
+        
+        <label for="testTextarea">テキストエリア:</label>
+        <textarea id="testTextarea" rows="3" cols="50" placeholder="長いテキストを入力"></textarea>
+        
+        <br><br>
+        
+        <button id="testButton1">テストボタン1</button>
+        <button id="testButton2">テストボタン2</button>
+        <button id="testButton3">テストボタン3</button>
+    </div>
+
+    <div class="test-section">
+        <h2>キーボードショートカットテスト</h2>
+        <p>パネルが開いているときにこれらのショートカットが無効化されることを確認</p>
+        
+        <div>
+            <button onclick="alert('Ctrl+Aが押されました')" id="testShortcut1">Ctrl+Aテスト</button>
+            <button onclick="alert('Ctrl+Sが押されました')" id="testShortcut2">Ctrl+Sテスト</button>
+            <button onclick="alert('Ctrl+Fが押されました')" id="testShortcut3">Ctrl+Fテスト</button>
+        </div>
+        
+        <p>Tabキーで要素間を移動できます</p>
+        <a href="#" onclick="alert('リンクがクリックされました'); return false;">テストリンク1</a>
+        <a href="#" onclick="alert('リンクがクリックされました'); return false;">テストリンク2</a>
+    </div>
+
+    <div class="test-section">
+        <h2>コンテンツ編集可能エリア</h2>
+        <div contenteditable="true" style="border: 1px solid #ccc; padding: 10px; min-height: 50px;">
+            ここはコンテンツ編集可能なエリアです。直接テキストを編集できます。
+        </div>
+    </div>
+
+    <!-- スクリプト読み込み -->
+    <script src="dist/script.user.js"></script>
+    
+    <script>
+        // フォーカスインジケーター
+        document.addEventListener('focusin', function(e) {
+            const element = e.target;
+            let elementInfo = '';
+            
+            if (element.id) {
+                elementInfo = `#${element.id}`;
+            } else if (element.className) {
+                elementInfo = `.${element.className.split(' ')[0]}`;
+            } else {
+                elementInfo = element.tagName.toLowerCase();
+            }
+            
+            document.getElementById('focusedElement').textContent = elementInfo;
+        });
+        
+        document.addEventListener('focusout', function() {
+            setTimeout(() => {
+                if (!document.activeElement || document.activeElement === document.body) {
+                    document.getElementById('focusedElement').textContent = 'なし';
+                }
+            }, 10);
+        });
+        
+        // キーボードイベントを監視
+        document.addEventListener('keydown', function(e) {
+            console.log('Key pressed:', e.key, 'Target:', e.target);
+        });
+    </script>
+</body>
+</html>

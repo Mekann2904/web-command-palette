@@ -103,3 +103,165 @@ export const removeEventListener = (
 ): void => {
   element?.removeEventListener(eventType, handler);
 };
+
+/**
+ * フォーカストラップ用のインターフェース
+ */
+export interface FocusTrap {
+  activate: () => void;
+  deactivate: () => void;
+  isActive: () => boolean;
+}
+
+/**
+ * フォーカストラップを作成する
+ * 指定されたコンテナ内にフォーカスを制限する
+ */
+export const createFocusTrap = (container: HTMLElement): FocusTrap => {
+  let isActive = false;
+  let previousActiveElement: HTMLElement | null = null;
+  let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  /**
+   * コンテナ内のフォーカス可能な要素を取得する
+   */
+  const getFocusableElements = (): HTMLElement[] => {
+    const focusableSelectors = [
+      'button:not([disabled])',
+      'input:not([disabled])',
+      'select:not([disabled])',
+      'textarea:not([disabled])',
+      'a[href]',
+      '[tabindex]:not([tabindex="-1"])',
+      '[contenteditable="true"]'
+    ].join(', ');
+
+    const elements = Array.from(container.querySelectorAll(focusableSelectors)) as HTMLElement[];
+    
+    // tabindex順にソート
+    return elements.sort((a, b) => {
+      const aIndex = parseInt(a.getAttribute('tabindex') || '0');
+      const bIndex = parseInt(b.getAttribute('tabindex') || '0');
+      return aIndex - bIndex;
+    });
+  };
+
+  /**
+   * 最初のフォーカス可能な要素にフォーカスを設定
+   */
+  const focusFirstElement = (): void => {
+    const focusableElements = getFocusableElements();
+    if (focusableElements.length > 0) {
+      focusableElements[0].focus();
+    }
+  };
+
+  /**
+   * キーダウンイベントハンドラ
+   */
+  const handleKeydown = (e: KeyboardEvent): void => {
+    if (e.key !== 'Tab') return;
+
+    const focusableElements = getFocusableElements();
+    if (focusableElements.length === 0) return;
+
+    const currentElement = document.activeElement as HTMLElement;
+    const currentIndex = focusableElements.indexOf(currentElement);
+
+    let targetIndex: number;
+
+    if (e.shiftKey) {
+      // Shift+Tab: 前の要素へ
+      targetIndex = currentIndex <= 0 ? focusableElements.length - 1 : currentIndex - 1;
+    } else {
+      // Tab: 次の要素へ
+      targetIndex = currentIndex >= focusableElements.length - 1 ? 0 : currentIndex + 1;
+    }
+
+    e.preventDefault();
+    focusableElements[targetIndex].focus();
+  };
+
+  /**
+   * フォーカストラップを有効化
+   */
+  const activate = (): void => {
+    if (isActive) return;
+
+    isActive = true;
+    previousActiveElement = document.activeElement as HTMLElement;
+    
+    // キーダウンイベントリスナーを追加
+    keydownHandler = handleKeydown;
+    container.addEventListener('keydown', keydownHandler, true);
+    
+    // 最初の要素にフォーカス
+    setTimeout(() => focusFirstElement(), 0);
+  };
+
+  /**
+   * フォーカストラップを無効化
+   */
+  const deactivate = (): void => {
+    if (!isActive) return;
+
+    isActive = false;
+    
+    // キーダウンイベントリスナーを削除
+    if (keydownHandler) {
+      container.removeEventListener('keydown', keydownHandler, true);
+      keydownHandler = null;
+    }
+    
+    // 以前の要素にフォーカスを戻す
+    if (previousActiveElement) {
+      setTimeout(() => {
+        if (previousActiveElement) {
+          previousActiveElement.focus();
+        }
+      }, 0);
+    }
+  };
+
+  /**
+   * フォーカストラップが有効かどうかを返す
+   */
+  const isTrapActive = (): boolean => isActive;
+
+  return {
+    activate,
+    deactivate,
+    isActive: isTrapActive
+  };
+};
+
+/**
+ * 要素がフォーカス可能かどうかを判定する
+ */
+export const isFocusable = (element: Element): boolean => {
+  if (!(element instanceof HTMLElement)) return false;
+  
+  // disabled属性があればフォーカス不可
+  if (element.hasAttribute('disabled')) return false;
+  
+  // tabindexが-1ならフォーカス不可
+  if (element.getAttribute('tabindex') === '-1') return false;
+  
+  // hiddenまたはdisplay:noneならフォーカス不可
+  if (element.hidden || element.style.display === 'none') return false;
+  
+  // フォーカス可能な要素かどうかを判定
+  const focusableTags = ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON', 'A'];
+  const isFocusableTag = focusableTags.includes(element.tagName);
+  
+  // aタグはhref属性が必要
+  if (element.tagName === 'A' && !element.hasAttribute('href')) return false;
+  
+  // tabindexが明示的に設定されているか
+  const hasTabIndex = element.hasAttribute('tabindex');
+  
+  // contenteditableがtrueか
+  const isContentEditable = element.getAttribute('contenteditable') === 'true';
+  
+  return isFocusableTag || hasTabIndex || isContentEditable;
+};

@@ -6,7 +6,7 @@ import { Manager } from '@/components/manager';
 import { SettingsUI } from '@/components/settings';
 import { PaletteCore } from '@/core/palette';
 import { KeyboardHandler } from '@/core/keyboard';
-import { setupGlobalHotkey, shouldAutoOpen, setGlobalHotkeyCallback } from '@/core/hotkey';
+import { setupGlobalHotkey, shouldAutoOpen, setGlobalHotkeyCallback, setPaletteOpenState } from '@/core/hotkey';
 import { initializeStorage, getSites, setSites, pruneUsage } from '@/core/storage';
 import { addSampleData } from '@/utils/test-data';
 import { defaultSettings } from '@/constants';
@@ -65,6 +65,7 @@ class CommandPaletteApp {
    * パレットを開く
    */
   openPalette(): void {
+    setPaletteOpenState(true);
     this.palette.openPalette();
     this.setupEventListeners();
   }
@@ -73,6 +74,7 @@ class CommandPaletteApp {
    * パレットを閉じる
    */
   hidePalette(): void {
+    setPaletteOpenState(false);
     this.palette.hidePalette();
   }
 
@@ -142,16 +144,24 @@ class CommandPaletteApp {
     
     // 入力イベント
     this.dom.inputEl.addEventListener('keydown', (e) => {
+      // 入力フィールド内のキーイベントは優先的に処理
+      console.log('[Debug] Input keydown:', e.key, e.target);
       this.state.activeIndex = this.keyboardHandler.onInputKey(
-        e, 
-        this.state.currentItems, 
-        this.state.activeIndex, 
-        this.dom.inputEl!, 
+        e,
+        this.state.currentItems,
+        this.state.activeIndex,
+        this.dom.inputEl!,
         this.autocompleteState.isVisible
       );
     });
     
     this.dom.inputEl.addEventListener('input', () => this.renderList());
+    
+    // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
+    this.dom.inputEl.addEventListener('keydown', (e) => {
+      // 入力フィールド内ではすべてのキーを許可
+      e.stopPropagation();
+    }, true);
     
     // ヒントエリアのクリックイベント
     this.dom.hintEl.addEventListener('click', (e) => {
