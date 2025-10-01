@@ -114,13 +114,13 @@ export class PaletteUI {
       :host { all: initial; }
       .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
       .overlay.visible { opacity: 1; }
-      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
-      .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
+      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); max-height: 75vh; background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transition: opacity 200ms ease; display: flex; flex-direction: column; }
+      .overlay.visible .panel { opacity: 1; }
       .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
       .input::placeholder { color: var(--input-placeholder); }
       .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
       .link { cursor: pointer; color: var(--accent-color); }
-      .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+      .list { max-height: min(60vh, 800px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
       .list::-webkit-scrollbar { width: 0; height: 0; }
       .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
       .item:nth-child(odd) { background: var(--item-bg-alt); }
@@ -518,10 +518,41 @@ export class PaletteUI {
   showPalette(): void {
     if (!this.dom.overlayEl) return;
     
+    // デバッグログ：パネル表示前の状態
+    console.log('[Debug] showPalette called', {
+      windowWidth: window.innerWidth,
+      windowHeight: window.innerHeight,
+      scrollTop: window.scrollY,
+      scrollLeft: window.scrollX
+    });
+    
     this.dom.overlayEl.style.display = 'block';
+    
+    // パネルの位置とサイズを動的に調整
+    this.adjustPanelPosition();
     
     // CSSベースの遷移を発火
     this.dom.overlayEl.classList.add('visible');
+    
+    // パネルの位置とサイズをデバッグ
+    setTimeout(() => {
+      if (this.dom.overlayEl && this.dom.overlayEl.querySelector('.panel')) {
+        const panel = this.dom.overlayEl.querySelector('.panel') as HTMLElement;
+        if (panel) {
+          const rect = panel.getBoundingClientRect();
+          console.log('[Debug] Panel dimensions and position after adjustment', {
+            width: rect.width,
+            height: rect.height,
+            top: rect.top,
+            left: rect.left,
+            bottom: rect.bottom,
+            right: rect.right,
+            windowHeight: window.innerHeight,
+            windowWidth: window.innerWidth
+          });
+        }
+      }
+    }, 100);
     
     setFocusTimeout(() => {
       if (this.dom.inputEl) {
@@ -531,10 +562,61 @@ export class PaletteUI {
   }
 
   /**
+   * パネルの位置とサイズを動的に調整
+   */
+  private adjustPanelPosition(): void {
+    if (!this.dom.overlayEl || !this.dom.overlayEl.querySelector('.panel'))
+      return;
+      
+    const panel = this.dom.overlayEl.querySelector('.panel') as HTMLElement;
+    const windowWidth = window.innerWidth;
+    const windowHeight = window.innerHeight;
+    const scrollTop = window.scrollY;
+    const scrollLeft = window.scrollX;
+    
+    // パネルの最大サイズを計算
+    const maxWidth = Math.min(720, windowWidth * 0.92);
+    const maxHeight = windowHeight * 0.8;
+    
+    // パネルの位置を計算（中央配置）
+    let top = scrollTop + (windowHeight * 0.1); // 画面の10%の位置から開始
+    let left = scrollLeft + (windowWidth - maxWidth) / 2;
+    
+    // パネルが画面外にはみ出す場合の調整
+    if (top < scrollTop) {
+      top = scrollTop + 10; // 上端から10pxの位置
+    }
+    if (left < scrollLeft) {
+      left = scrollLeft + 10; // 左端から10pxの位置
+    }
+    
+    // パネルのスタイルを更新
+    panel.style.width = `${maxWidth}px`;
+    panel.style.maxHeight = `${maxHeight}px`;
+    panel.style.position = 'absolute';
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.transform = 'none'; // transformをリセット
+    
+    console.log('[Debug] Adjusted panel position', {
+      maxWidth,
+      maxHeight,
+      top,
+      left,
+      windowWidth,
+      windowHeight,
+      scrollTop,
+      scrollLeft
+    });
+  }
+
+  /**
    * パレットを非表示
    */
   hidePalette(): void {
     if (!this.dom.overlayEl) return;
+    
+    console.log('[Debug] Hiding palette');
     
     this.dom.overlayEl.classList.remove('visible');
     
@@ -542,6 +624,7 @@ export class PaletteUI {
     setTimeout(() => {
       if (this.dom.overlayEl && !this.state.isOpen) {
         this.dom.overlayEl.style.display = 'none';
+        console.log('[Debug] Palette hidden, display set to none');
       }
     }, 220);
   }

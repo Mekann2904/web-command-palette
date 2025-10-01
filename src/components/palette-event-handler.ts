@@ -57,8 +57,20 @@ export class PaletteEventHandler {
   private setupInputEventListeners(): void {
     if (!this.dom.inputEl) return;
 
+    // デバッグログ：入力要素の状態
+    console.log('[Debug] Setting up input event listeners', {
+      inputElement: this.dom.inputEl,
+      inputType: this.dom.inputEl.type,
+      inputId: this.dom.inputEl.id,
+      inputClasses: this.dom.inputEl.className
+    });
+
     // 入力イベント
-    this.dom.inputEl.addEventListener('input', () => {
+    this.dom.inputEl.addEventListener('input', (e) => {
+      console.log('[Debug] Input event', {
+        value: this.dom.inputEl?.value,
+        event: e
+      });
       this.state.activeIndex = 0;
       this.renderList();
     });
@@ -67,6 +79,46 @@ export class PaletteEventHandler {
     EventListeners.addKeydown(this.dom.inputEl, (e) => {
       this.handleInputKeydown(e);
     });
+
+    // キープレスイベント（英字入力の診断用）
+    this.dom.inputEl.addEventListener('keypress', (e) => {
+      console.log('[Debug] Keypress event', {
+        key: e.key,
+        charCode: e.charCode,
+        keyCode: e.keyCode,
+        which: e.which,
+        value: this.dom.inputEl?.value
+      });
+    });
+
+    // 入力フィールドがフォーカスされたときの処理
+    this.dom.inputEl.addEventListener('focus', (e) => {
+      console.log('[Debug] Input field focused', {
+        value: this.dom.inputEl?.value,
+        event: e
+      });
+    });
+
+    // コンポジションイベント（日本語入力など）
+    this.dom.inputEl.addEventListener('compositionstart', (e) => {
+      console.log('[Debug] Composition start', {
+        value: this.dom.inputEl?.value,
+        event: e
+      });
+    });
+
+    this.dom.inputEl.addEventListener('compositionend', (e) => {
+      console.log('[Debug] Composition end', {
+        value: this.dom.inputEl?.value,
+        event: e
+      });
+      this.state.activeIndex = 0;
+      this.renderList();
+    });
+
+    // 入力フィールドのIMEモードを確実に設定
+    this.dom.inputEl.setAttribute('ime-mode', 'active');
+    (this.dom.inputEl as any).style.imeMode = 'active';
   }
 
   /**
@@ -149,24 +201,43 @@ export class PaletteEventHandler {
    * 入力フィールドのキーダウンイベントを処理
    */
   private handleInputKeydown(e: KeyboardEvent): void {
-    if (!this.state.currentItems || !this.state.currentItems.length) return;
+    // デバッグログ：キー入力の詳細
+    console.log('[Debug] Keydown event', {
+      key: e.key,
+      keyCode: e.keyCode,
+      which: e.which,
+      code: e.code,
+      altKey: e.altKey,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+      shiftKey: e.shiftKey,
+      currentItems: this.state.currentItems ? this.state.currentItems.length : 0,
+      activeIndex: this.state.activeIndex
+    });
 
+    // まず、特殊キーの処理
     switch (e.key) {
       case 'ArrowDown':
-        e.preventDefault();
-        this.state.activeIndex = Math.min(this.state.activeIndex + 1, this.state.currentItems.length - 1);
-        this.updateActive();
+        if (this.state.currentItems && this.state.currentItems.length > 0) {
+          e.preventDefault();
+          this.state.activeIndex = Math.min(this.state.activeIndex + 1, this.state.currentItems.length - 1);
+          this.updateActive();
+        }
         break;
       case 'ArrowUp':
-        e.preventDefault();
-        this.state.activeIndex = Math.max(this.state.activeIndex - 1, 0);
-        this.updateActive();
+        if (this.state.currentItems && this.state.currentItems.length > 0) {
+          e.preventDefault();
+          this.state.activeIndex = Math.max(this.state.activeIndex - 1, 0);
+          this.updateActive();
+        }
         break;
       case 'Enter':
-        e.preventDefault();
-        const item = this.state.currentItems[this.state.activeIndex];
-        if (item) {
-          this.openItem(item, e.shiftKey);
+        if (this.state.currentItems && this.state.currentItems.length > 0) {
+          e.preventDefault();
+          const item = this.state.currentItems[this.state.activeIndex];
+          if (item) {
+            this.openItem(item, e.shiftKey);
+          }
         }
         break;
       case 'Escape':
@@ -176,6 +247,11 @@ export class PaletteEventHandler {
       case 'Tab':
         e.preventDefault();
         // タグ選択機能はオートコンプリート機能に統一されたため、ここでは何もしない
+        break;
+      default:
+        // 英数字やその他の文字入力はデフォルトの動作を許可
+        console.log('[Debug] Allowing default behavior for key:', e.key);
+        // 何もしないでデフォルトの動作を許可
         break;
     }
   }

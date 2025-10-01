@@ -1,82 +1,91 @@
-import { Settings } from '@/types';
-import { getSettings } from './storage';
-import { wildcard } from '@/utils';
+import { getSettings } from '@/core/storage';
+import type { Settings } from '@/types/settings';
 
-/**
- * ホットキーが一致するかチェックする
- */
-export const matchHotkey = (e: KeyboardEvent, sig: string): boolean => {
-  if (!sig) return false;
+// ホットキー判定関数
+export const matchHotkey = (e: KeyboardEvent, signature: string): boolean => {
+  const parts = signature.split('+');
+  const hasMeta = parts.includes('Meta');
+  const hasCtrl = parts.includes('Control');
+  const hasAlt = parts.includes('Alt');
+  const hasShift = parts.includes('Shift');
+  const keyPart = parts.find(p => !['Meta', 'Control', 'Alt', 'Shift'].includes(p));
   
-  // ホットキー文字列を解析（例: "Meta+Shift+KeyP"）
-  const parts = sig.split('+');
-  const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
-  
-  // 修飾キーの部分を取得
-  const modifiers = parts.slice(0, -1);
-  
-  // 修飾キー自体がメインキーとして設定されている場合は無効
-  const isModifierKey = [
-    'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
-    'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
-  ].includes(mainKey);
-  
-  if (isModifierKey) return false;
-  
-  // メインキーが一致するかチェック
-  if (e.code !== mainKey) return false;
-  
-  // 修飾キーの状態をチェック
-  const hasMeta = modifiers.includes('Meta');
-  const hasControl = modifiers.includes('Control');
-  const hasAlt = modifiers.includes('Alt');
-  const hasShift = modifiers.includes('Shift');
-  
-  // 修飾キーの状態が一致するかチェック
   return (
-    (hasMeta === e.metaKey) &&
-    (hasControl === e.ctrlKey) &&
-    (hasAlt === e.altKey) &&
-    (hasShift === e.shiftKey)
+    e.metaKey === hasMeta &&
+    e.ctrlKey === hasCtrl &&
+    e.altKey === hasAlt &&
+    e.shiftKey === hasShift &&
+    (keyPart ? e.key === keyPart || e.code === keyPart : true)
   );
 };
 
-/**
- * サイトがブロックリストに含まれるかチェックする
- */
-export const isBlocked = (): boolean => {
-  const s = getSettings();
-  const patterns = (s.blocklist || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
-  if (!patterns.length) return false;
-  const host = location.hostname;
-  return patterns.some(p => wildcard(host, p));
-};
-
-/**
- * 自動オープンが必要かチェックする
- */
-export const shouldAutoOpen = (): boolean => {
-  const { autoOpenUrls = [] } = getSettings();
-  if (!Array.isArray(autoOpenUrls) || !autoOpenUrls.length) return false;
-  const current = location.href;
-  return autoOpenUrls.some(pattern => {
-    const parts = pattern.split('*').map(x => x.replace(/[\.^$+?()|{}\[\]]/g, r => '\\' + r));
-    const regex = new RegExp('^' + parts.join('.*') + '');
-    return regex.test(current);
+// ブロックサイト判定関数
+const isBlocked = (): boolean => {
+  const settings = getSettings();
+  if (!settings.blocklist) return false;
+  
+  const blocklist = settings.blocklist.split(',').map(s => s.trim()).filter(Boolean);
+  if (!blocklist.length) return false;
+  
+  const hostname = window.location.hostname;
+  const href = window.location.href;
+  
+  return blocklist.some(pattern => {
+    try {
+      const regex = new RegExp(pattern, 'i');
+      return regex.test(hostname) || regex.test(href);
+    } catch {
+      return false;
+    }
   });
 };
 
-// グローバルホットキーコールバックを保持する変数
-let globalHotkeyCallback: (() => void) | null = null;
-
 // パレットが開いているかどうかを追跡する変数
 let isPaletteOpen = false;
+
+// グローバルホットキーコールバック
+let globalHotkeyCallback: (() => void) | null = null;
 
 /**
  * パレットの開閉状態を設定する
  */
 export const setPaletteOpenState = (isOpen: boolean): void => {
   isPaletteOpen = isOpen;
+  console.log('[Debug] Palette state set to:', isOpen);
+};
+
+/**
+ * グローバルホットキーコールバックを設定する
+ */
+export const setGlobalHotkeyCallback = (callback: () => void): void => {
+  globalHotkeyCallback = callback;
+};
+
+/**
+ * 自動オープンをチェック
+ */
+export const shouldAutoOpen = (): boolean => {
+  const settings = getSettings();
+  if (!settings.autoOpenUrls || !settings.autoOpenUrls.length) return false;
+  
+  const currentUrl = window.location.href;
+  return settings.autoOpenUrls.some(url => {
+    try {
+      return new RegExp(url, 'i').test(currentUrl);
+    } catch {
+      return false;
+    }
+  });
+};
+
+/**
+ * グローバルホットキーを設定する
+ */
+export const setupGlobalHotkey = (settings: Settings): void => {
+  // 既存のリスナーを削除
+  window.removeEventListener('keydown', onGlobalKeydown, true);
+  // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
+  window.addEventListener('keydown', onGlobalKeydown, false);
 };
 
 /**
@@ -87,21 +96,29 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
     // ブロックサイトでは処理しない
     if (isBlocked()) return;
     
-    // デバッグログ
-    if (isPaletteOpen) {
-      console.log('[Debug] Global keydown:', {
-        key: e.key,
-        code: e.code,
-        target: e.target,
-        targetTagName: (e.target as HTMLElement)?.tagName,
-        targetClassName: (e.target as HTMLElement)?.className,
-        isComposing: e.isComposing,
-        keyCode: e.keyCode
-      });
-    }
+    // パネルが実際に表示されているかをチェック
+    const overlayVisible = document.querySelector('.overlay') as HTMLElement;
+    const isActuallyVisible = overlayVisible && 
+                            overlayVisible.classList.contains('visible') && 
+                            overlayVisible.style.display !== 'none';
     
-    // パレットが開いている場合は、特定のキー以外は無視
-    if (isPaletteOpen) {
+    // デバッグログ
+    console.log('[Debug] Global keydown:', {
+      key: e.key,
+      code: e.code,
+      target: e.target,
+      targetTagName: (e.target as HTMLElement)?.tagName,
+      targetClassName: (e.target as HTMLElement)?.className,
+      isComposing: e.isComposing,
+      keyCode: e.keyCode,
+      isPaletteOpen,
+      isActuallyVisible,
+      overlayDisplay: overlayVisible?.style.display,
+      overlayClasses: overlayVisible?.className
+    });
+    
+    // パネルが実際に表示されている場合のみ、パネル関連の処理を行う
+    if (isActuallyVisible) {
       // パレット内の要素からのイベントかチェック
       const target = e.target as HTMLElement | null;
       const isInPalette = target && (
@@ -110,20 +127,22 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
         target.closest('.panel')
       );
       
-      console.log('[Debug] Is in palette:', isInPalette, 'Target:', target);
+      console.log('[Debug] Palette is visible, checking if event is from palette:', isInPalette);
       
-      // パレット内からのイベントでない場合は無視
+      // パネル内からのイベントでない場合は無視
       if (!isInPalette) {
         // Escキーは常に許可（パネルを閉じるため）
         if (e.key === 'Escape') {
+          console.log('[Debug] Allowing Escape key outside palette');
           return; // Escキーは許可
         }
+        console.log('[Debug] Blocking key outside palette:', e.key);
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       
-      // パレット内の入力フィールドの場合は、ほぼすべてのキーを許可
+      // パネル内の入力フィールドの場合は、ほぼすべてのキーを許可
       const inputTarget = e.target as HTMLElement | null;
       const isInputField = inputTarget && (
         inputTarget.tagName === 'INPUT' ||
@@ -135,7 +154,7 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
       
       // 入力フィールド内では基本的にすべてのキーを許可
       if (isInputField) {
-        console.log('[Debug] Allowing key in input field');
+        console.log('[Debug] Allowing key in input field:', e.key);
         // 入力フィールド内では何も制限しない
         return;
       }
@@ -160,26 +179,47 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
       
       // 許可されたキーでない場合は無視
       if (!allowedKeys.includes(e.key)) {
-        console.log('[Debug] Blocking key:', e.key);
+        console.log('[Debug] Blocking key in palette:', e.key);
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       
+      console.log('[Debug] Allowing key in palette:', e.key);
       return; // パレットが開いている場合はここで処理終了
     }
     
-    // 編集中の要素では処理しない
+    // パネルが閉じている場合は、基本的にすべてのキーを許可
+    console.log('[Debug] Palette is closed, checking for hotkey:', e.key);
+    
+    // 編集中の要素ではホットキーのみをチェック
     const mainTarget = e.target as HTMLElement | null;
     const tag = (mainTarget && mainTarget.tagName) || '';
     const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
                      (mainTarget && mainTarget.isContentEditable);
-    if (editable) return;
     
+    if (editable) {
+      console.log('[Debug] Target is editable, only checking hotkey');
+      // 編集中の要素でもホットキーはチェックするが、それ以外はすべて許可
+      const settings = getSettings();
+      if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+        console.log('[Debug] Hotkey matched in editable element');
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // パレットを開く処理を実行
+        if (globalHotkeyCallback) {
+          globalHotkeyCallback();
+        }
+      }
+      // ホットキー以外はすべて許可
+      return;
+    }
+    
+    // 編集中でない要素の場合のみ、ホットキーをチェック
     const settings = getSettings();
-    
-    // ホットキーをチェック
     if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+      console.log('[Debug] Hotkey matched, opening palette');
       e.preventDefault();
       e.stopPropagation();
       
@@ -188,24 +228,8 @@ export const onGlobalKeydown = (e: KeyboardEvent): void => {
         globalHotkeyCallback();
       }
     }
+    // ホットキー以外はすべて許可
   } catch (error) {
     console.error('[CommandPalette] Global hotkey error:', error);
   }
-};
-
-/**
- * グローバルホットキーコールバックを設定する
- */
-export const setGlobalHotkeyCallback = (callback: () => void): void => {
-  globalHotkeyCallback = callback;
-};
-
-/**
- * グローバルホットキーを設定する
- */
-export const setupGlobalHotkey = (settings: Settings): void => {
-  // 既存のリスナーを削除
-  window.removeEventListener('keydown', onGlobalKeydown, true);
-  // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
-  window.addEventListener('keydown', onGlobalKeydown, false);
 };

@@ -1415,13 +1415,13 @@
       :host { all: initial; }
       .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
       .overlay.visible { opacity: 1; }
-      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
-      .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
+      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); max-height: 75vh; background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transition: opacity 200ms ease; display: flex; flex-direction: column; }
+      .overlay.visible .panel { opacity: 1; }
       .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
       .input::placeholder { color: var(--input-placeholder); }
       .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
       .link { cursor: pointer; color: var(--accent-color); }
-      .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+      .list { max-height: min(60vh, 800px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
       .list::-webkit-scrollbar { width: 0; height: 0; }
       .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
       .item:nth-child(odd) { background: var(--item-bg-alt); }
@@ -1778,13 +1778,83 @@
         showPalette() {
             if (!this.dom.overlayEl)
                 return;
+            // デバッグログ：パネル表示前の状態
+            console.log('[Debug] showPalette called', {
+                windowWidth: window.innerWidth,
+                windowHeight: window.innerHeight,
+                scrollTop: window.scrollY,
+                scrollLeft: window.scrollX
+            });
             this.dom.overlayEl.style.display = 'block';
+            // パネルの位置とサイズを動的に調整
+            this.adjustPanelPosition();
             // CSSベースの遷移を発火
             this.dom.overlayEl.classList.add('visible');
+            // パネルの位置とサイズをデバッグ
+            setTimeout(() => {
+                if (this.dom.overlayEl && this.dom.overlayEl.querySelector('.panel')) {
+                    const panel = this.dom.overlayEl.querySelector('.panel');
+                    if (panel) {
+                        const rect = panel.getBoundingClientRect();
+                        console.log('[Debug] Panel dimensions and position after adjustment', {
+                            width: rect.width,
+                            height: rect.height,
+                            top: rect.top,
+                            left: rect.left,
+                            bottom: rect.bottom,
+                            right: rect.right,
+                            windowHeight: window.innerHeight,
+                            windowWidth: window.innerWidth
+                        });
+                    }
+                }
+            }, 100);
             setFocusTimeout(() => {
                 if (this.dom.inputEl) {
                     this.dom.inputEl.focus();
                 }
+            });
+        }
+        /**
+         * パネルの位置とサイズを動的に調整
+         */
+        adjustPanelPosition() {
+            if (!this.dom.overlayEl || !this.dom.overlayEl.querySelector('.panel'))
+                return;
+            const panel = this.dom.overlayEl.querySelector('.panel');
+            const windowWidth = window.innerWidth;
+            const windowHeight = window.innerHeight;
+            const scrollTop = window.scrollY;
+            const scrollLeft = window.scrollX;
+            // パネルの最大サイズを計算
+            const maxWidth = Math.min(720, windowWidth * 0.92);
+            const maxHeight = windowHeight * 0.8;
+            // パネルの位置を計算（中央配置）
+            let top = scrollTop + (windowHeight * 0.1); // 画面の10%の位置から開始
+            let left = scrollLeft + (windowWidth - maxWidth) / 2;
+            // パネルが画面外にはみ出す場合の調整
+            if (top < scrollTop) {
+                top = scrollTop + 10; // 上端から10pxの位置
+            }
+            if (left < scrollLeft) {
+                left = scrollLeft + 10; // 左端から10pxの位置
+            }
+            // パネルのスタイルを更新
+            panel.style.width = `${maxWidth}px`;
+            panel.style.maxHeight = `${maxHeight}px`;
+            panel.style.position = 'absolute';
+            panel.style.left = `${left}px`;
+            panel.style.top = `${top}px`;
+            panel.style.transform = 'none'; // transformをリセット
+            console.log('[Debug] Adjusted panel position', {
+                maxWidth,
+                maxHeight,
+                top,
+                left,
+                windowWidth,
+                windowHeight,
+                scrollTop,
+                scrollLeft
             });
         }
         /**
@@ -1793,11 +1863,13 @@
         hidePalette() {
             if (!this.dom.overlayEl)
                 return;
+            console.log('[Debug] Hiding palette');
             this.dom.overlayEl.classList.remove('visible');
             // CSSのtransition時間を踏まえて余裕を持って隠す
             setTimeout(() => {
                 if (this.dom.overlayEl && !this.state.isOpen) {
                     this.dom.overlayEl.style.display = 'none';
+                    console.log('[Debug] Palette hidden, display set to none');
                 }
             }, 220);
         }
@@ -1882,13 +1954,6 @@
             "'": '&#039;'
         };
         return s.replace(/[&<>"']/g, m => escapeMap[m] || m);
-    };
-    /**
-     * ワイルドカードマッチング
-     */
-    const wildcard = (str, pattern) => {
-        const re = new RegExp('^' + pattern.split('*').map(x => x.replace(/[\.^$+?()|{}\[\]]/g, r => '\\' + r)).join('.*') + '$', 'i');
-        return re.test(str);
     };
 
     /**
@@ -2087,8 +2152,19 @@
         setupInputEventListeners() {
             if (!this.dom.inputEl)
                 return;
+            // デバッグログ：入力要素の状態
+            console.log('[Debug] Setting up input event listeners', {
+                inputElement: this.dom.inputEl,
+                inputType: this.dom.inputEl.type,
+                inputId: this.dom.inputEl.id,
+                inputClasses: this.dom.inputEl.className
+            });
             // 入力イベント
-            this.dom.inputEl.addEventListener('input', () => {
+            this.dom.inputEl.addEventListener('input', (e) => {
+                console.log('[Debug] Input event', {
+                    value: this.dom.inputEl?.value,
+                    event: e
+                });
                 this.state.activeIndex = 0;
                 this.renderList();
             });
@@ -2096,6 +2172,41 @@
             EventListeners.addKeydown(this.dom.inputEl, (e) => {
                 this.handleInputKeydown(e);
             });
+            // キープレスイベント（英字入力の診断用）
+            this.dom.inputEl.addEventListener('keypress', (e) => {
+                console.log('[Debug] Keypress event', {
+                    key: e.key,
+                    charCode: e.charCode,
+                    keyCode: e.keyCode,
+                    which: e.which,
+                    value: this.dom.inputEl?.value
+                });
+            });
+            // 入力フィールドがフォーカスされたときの処理
+            this.dom.inputEl.addEventListener('focus', (e) => {
+                console.log('[Debug] Input field focused', {
+                    value: this.dom.inputEl?.value,
+                    event: e
+                });
+            });
+            // コンポジションイベント（日本語入力など）
+            this.dom.inputEl.addEventListener('compositionstart', (e) => {
+                console.log('[Debug] Composition start', {
+                    value: this.dom.inputEl?.value,
+                    event: e
+                });
+            });
+            this.dom.inputEl.addEventListener('compositionend', (e) => {
+                console.log('[Debug] Composition end', {
+                    value: this.dom.inputEl?.value,
+                    event: e
+                });
+                this.state.activeIndex = 0;
+                this.renderList();
+            });
+            // 入力フィールドのIMEモードを確実に設定
+            this.dom.inputEl.setAttribute('ime-mode', 'active');
+            this.dom.inputEl.style.imeMode = 'active';
         }
         /**
          * リストのイベントリスナーを設定
@@ -2171,24 +2282,42 @@
          * 入力フィールドのキーダウンイベントを処理
          */
         handleInputKeydown(e) {
-            if (!this.state.currentItems || !this.state.currentItems.length)
-                return;
+            // デバッグログ：キー入力の詳細
+            console.log('[Debug] Keydown event', {
+                key: e.key,
+                keyCode: e.keyCode,
+                which: e.which,
+                code: e.code,
+                altKey: e.altKey,
+                ctrlKey: e.ctrlKey,
+                metaKey: e.metaKey,
+                shiftKey: e.shiftKey,
+                currentItems: this.state.currentItems ? this.state.currentItems.length : 0,
+                activeIndex: this.state.activeIndex
+            });
+            // まず、特殊キーの処理
             switch (e.key) {
                 case 'ArrowDown':
-                    e.preventDefault();
-                    this.state.activeIndex = Math.min(this.state.activeIndex + 1, this.state.currentItems.length - 1);
-                    this.updateActive();
+                    if (this.state.currentItems && this.state.currentItems.length > 0) {
+                        e.preventDefault();
+                        this.state.activeIndex = Math.min(this.state.activeIndex + 1, this.state.currentItems.length - 1);
+                        this.updateActive();
+                    }
                     break;
                 case 'ArrowUp':
-                    e.preventDefault();
-                    this.state.activeIndex = Math.max(this.state.activeIndex - 1, 0);
-                    this.updateActive();
+                    if (this.state.currentItems && this.state.currentItems.length > 0) {
+                        e.preventDefault();
+                        this.state.activeIndex = Math.max(this.state.activeIndex - 1, 0);
+                        this.updateActive();
+                    }
                     break;
                 case 'Enter':
-                    e.preventDefault();
-                    const item = this.state.currentItems[this.state.activeIndex];
-                    if (item) {
-                        this.openItem(item, e.shiftKey);
+                    if (this.state.currentItems && this.state.currentItems.length > 0) {
+                        e.preventDefault();
+                        const item = this.state.currentItems[this.state.activeIndex];
+                        if (item) {
+                            this.openItem(item, e.shiftKey);
+                        }
                     }
                     break;
                 case 'Escape':
@@ -2198,6 +2327,11 @@
                 case 'Tab':
                     e.preventDefault();
                     // タグ選択機能はオートコンプリート機能に統一されたため、ここでは何もしない
+                    break;
+                default:
+                    // 英数字やその他の文字入力はデフォルトの動作を許可
+                    console.log('[Debug] Allowing default behavior for key:', e.key);
+                    // 何もしないでデフォルトの動作を許可
                     break;
             }
         }
@@ -4084,72 +4218,82 @@
         }
     }
 
-    /**
-     * ホットキーが一致するかチェックする
-     */
-    const matchHotkey = (e, sig) => {
-        if (!sig)
-            return false;
-        // ホットキー文字列を解析（例: "Meta+Shift+KeyP"）
-        const parts = sig.split('+');
-        const mainKey = parts[parts.length - 1]; // 最後の部分がメインキー
-        // 修飾キーの部分を取得
-        const modifiers = parts.slice(0, -1);
-        // 修飾キー自体がメインキーとして設定されている場合は無効
-        const isModifierKey = [
-            'MetaLeft', 'MetaRight', 'ControlLeft', 'ControlRight',
-            'AltLeft', 'AltRight', 'ShiftLeft', 'ShiftRight'
-        ].includes(mainKey);
-        if (isModifierKey)
-            return false;
-        // メインキーが一致するかチェック
-        if (e.code !== mainKey)
-            return false;
-        // 修飾キーの状態をチェック
-        const hasMeta = modifiers.includes('Meta');
-        const hasControl = modifiers.includes('Control');
-        const hasAlt = modifiers.includes('Alt');
-        const hasShift = modifiers.includes('Shift');
-        // 修飾キーの状態が一致するかチェック
-        return ((hasMeta === e.metaKey) &&
-            (hasControl === e.ctrlKey) &&
-            (hasAlt === e.altKey) &&
-            (hasShift === e.shiftKey));
+    // ホットキー判定関数
+    const matchHotkey = (e, signature) => {
+        const parts = signature.split('+');
+        const hasMeta = parts.includes('Meta');
+        const hasCtrl = parts.includes('Control');
+        const hasAlt = parts.includes('Alt');
+        const hasShift = parts.includes('Shift');
+        const keyPart = parts.find(p => !['Meta', 'Control', 'Alt', 'Shift'].includes(p));
+        return (e.metaKey === hasMeta &&
+            e.ctrlKey === hasCtrl &&
+            e.altKey === hasAlt &&
+            e.shiftKey === hasShift &&
+            (keyPart ? e.key === keyPart || e.code === keyPart : true));
     };
-    /**
-     * サイトがブロックリストに含まれるかチェックする
-     */
+    // ブロックサイト判定関数
     const isBlocked = () => {
-        const s = getSettings();
-        const patterns = (s.blocklist || '').split(/\r?\n/).map(t => t.trim()).filter(Boolean);
-        if (!patterns.length)
+        const settings = getSettings();
+        if (!settings.blocklist)
             return false;
-        const host = location.hostname;
-        return patterns.some(p => wildcard(host, p));
-    };
-    /**
-     * 自動オープンが必要かチェックする
-     */
-    const shouldAutoOpen = () => {
-        const { autoOpenUrls = [] } = getSettings();
-        if (!Array.isArray(autoOpenUrls) || !autoOpenUrls.length)
+        const blocklist = settings.blocklist.split(',').map(s => s.trim()).filter(Boolean);
+        if (!blocklist.length)
             return false;
-        const current = location.href;
-        return autoOpenUrls.some(pattern => {
-            const parts = pattern.split('*').map(x => x.replace(/[\.^$+?()|{}\[\]]/g, r => '\\' + r));
-            const regex = new RegExp('^' + parts.join('.*') + '');
-            return regex.test(current);
+        const hostname = window.location.hostname;
+        const href = window.location.href;
+        return blocklist.some(pattern => {
+            try {
+                const regex = new RegExp(pattern, 'i');
+                return regex.test(hostname) || regex.test(href);
+            }
+            catch {
+                return false;
+            }
         });
     };
-    // グローバルホットキーコールバックを保持する変数
-    let globalHotkeyCallback = null;
     // パレットが開いているかどうかを追跡する変数
     let isPaletteOpen = false;
+    // グローバルホットキーコールバック
+    let globalHotkeyCallback = null;
     /**
      * パレットの開閉状態を設定する
      */
     const setPaletteOpenState = (isOpen) => {
         isPaletteOpen = isOpen;
+        console.log('[Debug] Palette state set to:', isOpen);
+    };
+    /**
+     * グローバルホットキーコールバックを設定する
+     */
+    const setGlobalHotkeyCallback = (callback) => {
+        globalHotkeyCallback = callback;
+    };
+    /**
+     * 自動オープンをチェック
+     */
+    const shouldAutoOpen = () => {
+        const settings = getSettings();
+        if (!settings.autoOpenUrls || !settings.autoOpenUrls.length)
+            return false;
+        const currentUrl = window.location.href;
+        return settings.autoOpenUrls.some(url => {
+            try {
+                return new RegExp(url, 'i').test(currentUrl);
+            }
+            catch {
+                return false;
+            }
+        });
+    };
+    /**
+     * グローバルホットキーを設定する
+     */
+    const setupGlobalHotkey = (settings) => {
+        // 既存のリスナーを削除
+        window.removeEventListener('keydown', onGlobalKeydown, true);
+        // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
+        window.addEventListener('keydown', onGlobalKeydown, false);
     };
     /**
      * グローバルキーボードイベントハンドラ
@@ -4159,37 +4303,46 @@
             // ブロックサイトでは処理しない
             if (isBlocked())
                 return;
+            // パネルが実際に表示されているかをチェック
+            const overlayVisible = document.querySelector('.overlay');
+            const isActuallyVisible = overlayVisible &&
+                overlayVisible.classList.contains('visible') &&
+                overlayVisible.style.display !== 'none';
             // デバッグログ
-            if (isPaletteOpen) {
-                console.log('[Debug] Global keydown:', {
-                    key: e.key,
-                    code: e.code,
-                    target: e.target,
-                    targetTagName: e.target?.tagName,
-                    targetClassName: e.target?.className,
-                    isComposing: e.isComposing,
-                    keyCode: e.keyCode
-                });
-            }
-            // パレットが開いている場合は、特定のキー以外は無視
-            if (isPaletteOpen) {
+            console.log('[Debug] Global keydown:', {
+                key: e.key,
+                code: e.code,
+                target: e.target,
+                targetTagName: e.target?.tagName,
+                targetClassName: e.target?.className,
+                isComposing: e.isComposing,
+                keyCode: e.keyCode,
+                isPaletteOpen,
+                isActuallyVisible,
+                overlayDisplay: overlayVisible?.style.display,
+                overlayClasses: overlayVisible?.className
+            });
+            // パネルが実際に表示されている場合のみ、パネル関連の処理を行う
+            if (isActuallyVisible) {
                 // パレット内の要素からのイベントかチェック
                 const target = e.target;
                 const isInPalette = target && (target.closest('#vm-cmd-palette-host') ||
                     target.closest('.overlay') ||
                     target.closest('.panel'));
-                console.log('[Debug] Is in palette:', isInPalette, 'Target:', target);
-                // パレット内からのイベントでない場合は無視
+                console.log('[Debug] Palette is visible, checking if event is from palette:', isInPalette);
+                // パネル内からのイベントでない場合は無視
                 if (!isInPalette) {
                     // Escキーは常に許可（パネルを閉じるため）
                     if (e.key === 'Escape') {
+                        console.log('[Debug] Allowing Escape key outside palette');
                         return; // Escキーは許可
                     }
+                    console.log('[Debug] Blocking key outside palette:', e.key);
                     e.preventDefault();
                     e.stopPropagation();
                     return;
                 }
-                // パレット内の入力フィールドの場合は、ほぼすべてのキーを許可
+                // パネル内の入力フィールドの場合は、ほぼすべてのキーを許可
                 const inputTarget = e.target;
                 const isInputField = inputTarget && (inputTarget.tagName === 'INPUT' ||
                     inputTarget.tagName === 'TEXTAREA' ||
@@ -4197,7 +4350,7 @@
                 console.log('[Debug] Is input field:', isInputField);
                 // 入力フィールド内では基本的にすべてのキーを許可
                 if (isInputField) {
-                    console.log('[Debug] Allowing key in input field');
+                    console.log('[Debug] Allowing key in input field:', e.key);
                     // 入力フィールド内では何も制限しない
                     return;
                 }
@@ -4218,23 +4371,41 @@
                 }
                 // 許可されたキーでない場合は無視
                 if (!allowedKeys.includes(e.key)) {
-                    console.log('[Debug] Blocking key:', e.key);
+                    console.log('[Debug] Blocking key in palette:', e.key);
                     e.preventDefault();
                     e.stopPropagation();
                     return;
                 }
+                console.log('[Debug] Allowing key in palette:', e.key);
                 return; // パレットが開いている場合はここで処理終了
             }
-            // 編集中の要素では処理しない
+            // パネルが閉じている場合は、基本的にすべてのキーを許可
+            console.log('[Debug] Palette is closed, checking for hotkey:', e.key);
+            // 編集中の要素ではホットキーのみをチェック
             const mainTarget = e.target;
             const tag = (mainTarget && mainTarget.tagName) || '';
             const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
                 (mainTarget && mainTarget.isContentEditable);
-            if (editable)
+            if (editable) {
+                console.log('[Debug] Target is editable, only checking hotkey');
+                // 編集中の要素でもホットキーはチェックするが、それ以外はすべて許可
+                const settings = getSettings();
+                if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+                    console.log('[Debug] Hotkey matched in editable element');
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // パレットを開く処理を実行
+                    if (globalHotkeyCallback) {
+                        globalHotkeyCallback();
+                    }
+                }
+                // ホットキー以外はすべて許可
                 return;
+            }
+            // 編集中でない要素の場合のみ、ホットキーをチェック
             const settings = getSettings();
-            // ホットキーをチェック
             if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+                console.log('[Debug] Hotkey matched, opening palette');
                 e.preventDefault();
                 e.stopPropagation();
                 // パレットを開く処理を実行
@@ -4242,25 +4413,11 @@
                     globalHotkeyCallback();
                 }
             }
+            // ホットキー以外はすべて許可
         }
         catch (error) {
             console.error('[CommandPalette] Global hotkey error:', error);
         }
-    };
-    /**
-     * グローバルホットキーコールバックを設定する
-     */
-    const setGlobalHotkeyCallback = (callback) => {
-        globalHotkeyCallback = callback;
-    };
-    /**
-     * グローバルホットキーを設定する
-     */
-    const setupGlobalHotkey = (settings) => {
-        // 既存のリスナーを削除
-        window.removeEventListener('keydown', onGlobalKeydown, true);
-        // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
-        window.addEventListener('keydown', onGlobalKeydown, false);
     };
 
     /**
