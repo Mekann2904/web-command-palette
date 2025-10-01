@@ -4,6 +4,7 @@ import { escapeHtml } from '@/utils/string';
 import { setupAutocompleteEvents, addClickListener, addMouseEnterListener, addMouseDownListener, addInputListener, addKeydownListener } from '@/utils/events';
 import { addInputSpace } from '@/utils/timing';
 import { sortTagsByHierarchy, countTagUsage, filterHierarchicalTags, createTagSuggestions, TagSuggestion } from '@/utils/tag-sort';
+import { validateInput } from '@/utils/security';
 
 /**
  * オートコンプリートUIを管理するクラス
@@ -317,14 +318,31 @@ export class Autocomplete {
    * 新規タグを作成
    */
   private createNewTag(tagName: string): void {
+    // 入力値の検証
+    if (!validateInput(tagName, 50)) { // タグ名は最大50文字
+      console.warn('Invalid tag name:', tagName);
+      return;
+    }
+    
+    // タグ名のサニタイズ
+    const sanitizedTagName = tagName.trim()
+      .replace(/[<>]/g, '') // HTMLタグ文字を削除
+      .replace(/[\x00-\x1F\x7F]/g, '') // 制御文字を削除
+      .replace(/\s+/g, ' '); // 連続する空白を単一の空白に
+    
+    if (!sanitizedTagName) {
+      console.warn('Tag name is empty after sanitization');
+      return;
+    }
+    
     const currentValue = this.dom.inputEl!.value;
     const hashIndex = currentValue.indexOf('#');
     
     if (hashIndex >= 0) {
       const beforeHash = currentValue.slice(0, hashIndex);
-      this.dom.inputEl!.value = beforeHash + '#' + tagName;
+      this.dom.inputEl!.value = beforeHash + '#' + sanitizedTagName;
     } else {
-      this.dom.inputEl!.value = '#' + tagName;
+      this.dom.inputEl!.value = '#' + sanitizedTagName;
     }
     
     this.hideAutocomplete();

@@ -41,7 +41,8 @@ export class Palette {
       (position) => this.handleVirtualScroll(position),
       () => this.hidePalette(),
       () => this.openManager(),
-      () => this.openSettings()
+      () => this.openSettings(),
+      () => this.handleBingSearch()
     );
     
     // コールバックを設定
@@ -66,6 +67,7 @@ export class Palette {
     this.eventHandler.setGetEntriesCallback(() => this.getEntries());
     
     this.eventHandler.setGetUsageCacheCallback(() => this.getUsageCache());
+    this.eventHandler.setBingSearchCallback(() => this.handleBingSearch());
   }
 
   /**
@@ -156,7 +158,7 @@ export class Palette {
 
     // 表示アイテムをレンダリング
     visibleItems.forEach(({ item, index, style }) => {
-      const { entry } = item.data;
+      const { entry } = item.data as { entry: SiteEntry; index: number };
       const itemEl = this.ui.createListItem(entry, index);
       itemEl.setAttribute('style', Object.entries(style).map(([k, v]) => `${k}: ${v}`).join('; '));
       virtualScrollContent!.appendChild(itemEl);
@@ -175,6 +177,19 @@ export class Palette {
    */
   private openSettings(): void {
     this.openSettingsCallback();
+  }
+
+  /**
+   * Bing検索を処理
+   */
+  private handleBingSearch(): void {
+    // このメソッドはmain.tsのrunBingSearchを呼び出す必要がある
+    // しかし、直接参照できないので、代わりにカスタムイベントを発行
+    const event = new CustomEvent('palette-bing-search', {
+      bubbles: true,
+      detail: { query: this.ui.getInputValue() }
+    });
+    this.dom.inputEl?.dispatchEvent(event);
   }
 
   /**

@@ -265,6 +265,10 @@ export class PaletteUI {
   private createOverlayElement(): HTMLElement {
     const overlay = document.createElement('div');
     overlay.className = 'overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'コマンドパレット');
+    overlay.setAttribute('tabindex', '-1');
     return overlay;
   }
 
@@ -274,23 +278,40 @@ export class PaletteUI {
   private createPanelElement(): HTMLElement {
     const panel = document.createElement('div');
     panel.className = 'panel';
+    panel.setAttribute('role', 'search');
+    panel.setAttribute('aria-label', 'サイト検索');
 
     // 入力要素を作成
     this.dom.inputEl = document.createElement('input');
     this.dom.inputEl.className = 'input';
     this.dom.inputEl.type = 'text';
+    this.dom.inputEl.setAttribute('role', 'combobox');
+    this.dom.inputEl.setAttribute('aria-expanded', 'false');
+    this.dom.inputEl.setAttribute('aria-autocomplete', 'list');
+    this.dom.inputEl.setAttribute('aria-label', 'サイト名、URL、またはタグで検索');
+    this.dom.inputEl.setAttribute('placeholder', 'サイト名、URL、またはタグで検索...');
+    this.dom.inputEl.setAttribute('autocomplete', 'off');
+    this.dom.inputEl.setAttribute('autocorrect', 'off');
+    this.dom.inputEl.setAttribute('autocapitalize', 'off');
+    this.dom.inputEl.setAttribute('spellcheck', 'false');
 
     // リスト要素を作成
     this.dom.listEl = document.createElement('div');
     this.dom.listEl.className = 'list';
+    this.dom.listEl.setAttribute('role', 'listbox');
+    this.dom.listEl.setAttribute('aria-label', '検索結果');
 
     // ヒント要素を作成
     this.dom.hintEl = document.createElement('div');
     this.dom.hintEl.className = 'hint';
+    this.dom.hintEl.setAttribute('role', 'status');
+    this.dom.hintEl.setAttribute('aria-live', 'polite');
     this.dom.hintLeftSpan = document.createElement('span');
     this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
+    this.dom.hintLeftSpan.setAttribute('aria-hidden', 'true');
     const rightSpan = document.createElement('span');
-    rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
+    rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0" role="button" aria-label="サイトマネージャを開く">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0" role="button" aria-label="設定を開く">設定</span> · ⌘P / Ctrl+P';
+    rightSpan.setAttribute('aria-hidden', 'true');
     
     // nullチェックを追加
     if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
@@ -356,9 +377,17 @@ export class PaletteUI {
     item.className = 'item';
     item.dataset.index = index.toString();
     item.dataset.id = entry.id;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', 'false');
+    item.setAttribute('tabindex', '-1');
+    
+    // アクセシビリティ用のラベル
+    const ariaLabel = `${entry.name} - ${entry.url}${entry.tags.length > 0 ? `。タグ: ${entry.tags.join(', ')}` : ''}`;
+    item.setAttribute('aria-label', ariaLabel);
 
     // ファビコンを作成
     const favicon = createFaviconEl(entry);
+    favicon.setAttribute('aria-hidden', 'true');
     item.appendChild(favicon);
 
     // 名前とURLのコンテナを作成
@@ -368,18 +397,21 @@ export class PaletteUI {
     const name = document.createElement('div');
     name.className = 'name';
     name.textContent = entry.name;
+    name.setAttribute('aria-hidden', 'true');
 
     // コマンドバッジを追加
     if ((entry as any).type === 'command') {
       const badge = document.createElement('span');
       badge.className = 'command-badge';
       badge.textContent = 'CMD';
+      badge.setAttribute('aria-label', 'コマンド');
       name.appendChild(badge);
     }
 
     const url = document.createElement('div');
     url.className = 'url';
     url.textContent = entry.url;
+    url.setAttribute('aria-hidden', 'true');
 
     info.appendChild(name);
     info.appendChild(url);
@@ -388,6 +420,7 @@ export class PaletteUI {
     if (entry.tags && entry.tags.length > 0) {
       const tagBadges = document.createElement('div');
       tagBadges.className = 'tag-badges';
+      tagBadges.setAttribute('aria-hidden', 'true');
 
       const maxTags = 3;
       const visibleTags = entry.tags.slice(0, maxTags);
@@ -398,6 +431,7 @@ export class PaletteUI {
         const tagEl = document.createElement('span');
         tagEl.className = 'tag';
         tagEl.textContent = tag;
+        tagEl.setAttribute('aria-label', `タグ: ${tag}`);
         tagBadges.appendChild(tagEl);
       });
 
@@ -429,10 +463,19 @@ export class PaletteUI {
     items.forEach((item, index) => {
       if (index === activeIndex) {
         item.classList.add('active');
+        item.setAttribute('aria-selected', 'true');
+        item.setAttribute('tabindex', '0');
       } else {
         item.classList.remove('active');
+        item.setAttribute('aria-selected', 'false');
+        item.setAttribute('tabindex', '-1');
       }
     });
+
+    // 入力フィールドのaria-expandedを更新
+    if (this.dom.inputEl) {
+      this.dom.inputEl.setAttribute('aria-expanded', items.length > 0 ? 'true' : 'false');
+    }
 
     // 仮想スクロールの場合はアクティブアイテムまでスクロール
     if (this.virtualScrollManager && this.virtualScrollContainer) {
@@ -476,7 +519,7 @@ export class PaletteUI {
 
       // 表示アイテムをシンプルにレンダリング（アニメーションなし）
       visibleItems.forEach(({ item, index, style }) => {
-        const { entry } = item.data;
+        const { entry } = item.data as { entry: SiteEntry; index: number };
         const itemEl = this.createListItem(entry, index);
         itemEl.setAttribute('style', Object.entries(style).map(([k, v]) => `${k}: ${v}`).join('; '));
         this.virtualScrollContent!.appendChild(itemEl);
@@ -495,6 +538,8 @@ export class PaletteUI {
     if (!scored.length) {
       const empty = document.createElement('div');
       empty.className = 'empty';
+      empty.setAttribute('role', 'status');
+      empty.setAttribute('aria-live', 'polite');
       empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
       this.dom.listEl.appendChild(empty);
       return;

@@ -87,20 +87,26 @@ export const getUsageBoost = (entry: SiteEntry, usageCache: Record<string, numbe
  * エントリをスコアリングする
  */
 export const scoreEntries = (entries: SiteEntry[], query: string, usageCache: Record<string, number>): { entry: SiteEntry; score: number }[] => {
-  const base = entries.map(e => ({ entry: e, score: 0 }));
+  const base = new Array(entries.length);
+  for (let i = 0; i < entries.length; i++) {
+    base[i] = { entry: entries[i], score: 0 };
+  }
+  
   if (!query) {
-    base.forEach(item => { item.score = 0.0001 + getUsageBoost(item.entry, usageCache); });
+    for (let i = 0; i < base.length; i++) {
+      base[i].score = 0.0001 + getUsageBoost(base[i].entry, usageCache);
+    }
   } else {
     const matcher = createFuzzyMatcher(query);
-    base.forEach(item => {
-      const entry = item.entry;
+    for (let i = 0; i < base.length; i++) {
+      const entry = base[i].entry;
       const score = Math.max(
         matcher(entry.name || ''),
         matcher(entry.url || '') - 4,
         matcher((entry.tags || []).join(' ')) - 2
       );
-      item.score = score === -Infinity ? -Infinity : score + getUsageBoost(item.entry, usageCache);
-    });
+      base[i].score = score === -Infinity ? -Infinity : score + getUsageBoost(base[i].entry, usageCache);
+    }
   }
 
   const filtered = base.filter(item => item.score > -Infinity);
@@ -166,12 +172,7 @@ export const createFuzzyMatcher = (query: string) => {
   };
 };
 
-/**
- * 正規表現をエスケープする
- */
-const escapeRegex = (str: string): string => {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-};
+import { escapeRegex } from './string';
 
 /**
  * フィルタリングとスコアリングを一度に行う

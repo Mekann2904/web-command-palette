@@ -17,17 +17,19 @@ export class PaletteEventHandler {
   private onEscape: () => void;
   private onOpenManager: () => void;
   private onOpenSettings: () => void;
+  private onBingSearch: () => void = () => {};
   private onRenderList: (scored: SiteEntry[], hasQuery: boolean) => void = () => {};
   private onUpdateActive: (activeIndex: number) => void = () => {};
 
   constructor(
-    state: AppState, 
-    dom: DOMElements, 
+    state: AppState,
+    dom: DOMElements,
     onExecuteEntry: (item: SiteEntry, shiftPressed: boolean) => void,
     onVirtualScroll: (position: any) => void,
     onEscape: () => void,
     onOpenManager: () => void,
-    onOpenSettings: () => void
+    onOpenSettings: () => void,
+    onBingSearch?: () => void
   ) {
     this.state = state;
     this.dom = dom;
@@ -36,9 +38,10 @@ export class PaletteEventHandler {
     this.onEscape = onEscape;
     this.onOpenManager = onOpenManager;
     this.onOpenSettings = onOpenSettings;
+    this.onBingSearch = onBingSearch || (() => {});
     
-    // デバウンスされたレンダリング関数を作成
-    this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
+    // デバウンスされたレンダリング関数を作成（統一された遅延時間）
+    this.debouncedRenderList = debounce(() => this.performRenderList(), 100);
   }
 
   /**
@@ -65,12 +68,8 @@ export class PaletteEventHandler {
       inputClasses: this.dom.inputEl.className
     });
 
-    // 入力イベント
+    // 入力イベント（統一されたデバウンス処理）
     this.dom.inputEl.addEventListener('input', (e) => {
-      console.log('[Debug] Input event', {
-        value: this.dom.inputEl?.value,
-        event: e
-      });
       this.state.activeIndex = 0;
       this.renderList();
     });
@@ -80,45 +79,28 @@ export class PaletteEventHandler {
       this.handleInputKeydown(e);
     });
 
-    // キープレスイベント（英字入力の診断用）
-    this.dom.inputEl.addEventListener('keypress', (e) => {
-      console.log('[Debug] Keypress event', {
-        key: e.key,
-        charCode: e.charCode,
-        keyCode: e.keyCode,
-        which: e.which,
-        value: this.dom.inputEl?.value
-      });
-    });
-
     // 入力フィールドがフォーカスされたときの処理
     this.dom.inputEl.addEventListener('focus', (e) => {
-      console.log('[Debug] Input field focused', {
-        value: this.dom.inputEl?.value,
-        event: e
-      });
+      // フォーカス処理
     });
 
     // コンポジションイベント（日本語入力など）
     this.dom.inputEl.addEventListener('compositionstart', (e) => {
-      console.log('[Debug] Composition start', {
-        value: this.dom.inputEl?.value,
-        event: e
-      });
+      // コンポジション開始時にフラグを設定
+      (this.dom.inputEl as any).isComposing = true;
+    });
+
+    this.dom.inputEl.addEventListener('compositionupdate', (e) => {
+      // コンポジション更新中は検索を実行しない
+      (this.dom.inputEl as any).isComposing = true;
     });
 
     this.dom.inputEl.addEventListener('compositionend', (e) => {
-      console.log('[Debug] Composition end', {
-        value: this.dom.inputEl?.value,
-        event: e
-      });
+      // コンポジション終了時にフラグを解除して検索を実行
+      (this.dom.inputEl as any).isComposing = false;
       this.state.activeIndex = 0;
       this.renderList();
     });
-
-    // 入力フィールドのIMEモードを確実に設定
-    this.dom.inputEl.setAttribute('ime-mode', 'active');
-    (this.dom.inputEl as any).style.imeMode = 'active';
   }
 
   /**
@@ -201,21 +183,34 @@ export class PaletteEventHandler {
    * 入力フィールドのキーダウンイベントを処理
    */
   private handleInputKeydown(e: KeyboardEvent): void {
-    // デバッグログ：キー入力の詳細
-    console.log('[Debug] Keydown event', {
-      key: e.key,
-      keyCode: e.keyCode,
-      which: e.which,
-      code: e.code,
-      altKey: e.altKey,
-      ctrlKey: e.ctrlKey,
-      metaKey: e.metaKey,
-      shiftKey: e.shiftKey,
-      currentItems: this.state.currentItems ? this.state.currentItems.length : 0,
-      activeIndex: this.state.activeIndex
-    });
+    // 日本語入力中は一部のキーのみを処理
+    const isComposing = (this.dom.inputEl as any).isComposing || e.isComposing;
+    
+    // Meta+EnterでBing検索（日本語入力中も有効）
+    if (e.key === 'Enter' && e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+      this.handleBingSearch();
+      return;
+    }
 
-    // まず、特殊キーの処理
+    // 日本語入力中はEnterキーとEscキーのみを処理
+    if (isComposing) {
+      if (e.key === 'Enter') {
+        // 日本語入力中のEnterは変換確定なので、デフォルト動作を許可
+        return;
+      }
+      if (e.key === 'Escape') {
+        // 日本語入力中のEscapeは変換キャンセル
+        e.preventDefault();
+        this.onEscape();
+        return;
+      }
+      // その他のキーはデフォルト動作を許可
+      return;
+    }
+
+    // 通常時のキー処理
     switch (e.key) {
       case 'ArrowDown':
         if (this.state.currentItems && this.state.currentItems.length > 0) {
@@ -246,12 +241,24 @@ export class PaletteEventHandler {
         break;
       case 'Tab':
         e.preventDefault();
-        // タグ選択機能はオートコンプリート機能に統一されたため、ここでは何もしない
+        // タグ選択機能はオートコンプリート機能に統合されたため、ここでは何もしない
+        break;
+      case 'Home':
+        e.preventDefault();
+        if (this.state.currentItems && this.state.currentItems.length > 0) {
+          this.state.activeIndex = 0;
+          this.updateActive();
+        }
+        break;
+      case 'End':
+        e.preventDefault();
+        if (this.state.currentItems && this.state.currentItems.length > 0) {
+          this.state.activeIndex = this.state.currentItems.length - 1;
+          this.updateActive();
+        }
         break;
       default:
         // 英数字やその他の文字入力はデフォルトの動作を許可
-        console.log('[Debug] Allowing default behavior for key:', e.key);
-        // 何もしないでデフォルトの動作を許可
         break;
     }
   }
@@ -367,6 +374,20 @@ export class PaletteEventHandler {
    */
   setGetUsageCacheCallback(callback: () => Record<string, number>): void {
     this.getUsageCache = callback;
+  }
+
+  /**
+   * Bing検索コールバックを設定
+   */
+  setBingSearchCallback(callback: () => void): void {
+    this.onBingSearch = callback;
+  }
+
+  /**
+   * Bing検索を処理
+   */
+  private handleBingSearch(): void {
+    this.onBingSearch();
   }
 
   /**

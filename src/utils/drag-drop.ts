@@ -6,7 +6,7 @@
 export interface DragDropItem {
   id: string;
   element: HTMLElement;
-  data?: any;
+  data?: unknown;
 }
 
 export interface DragDropOptions {

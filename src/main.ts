@@ -10,6 +10,7 @@ import { setupGlobalHotkey, shouldAutoOpen, setGlobalHotkeyCallback, setPaletteO
 import { initializeStorage, getSites, setSites, pruneUsage } from '@/core/storage';
 import { addSampleData } from '@/utils/test-data';
 import { defaultSettings } from '@/constants';
+import { initializeErrorHandling, handleError, ErrorType, ErrorLevel } from '@/utils/error-handler';
 
 // GM_* APIのグローバル宣言
 declare const GM_registerMenuCommand: (name: string, callback: () => void) => void;
@@ -148,6 +149,11 @@ class CommandPaletteApp {
       if (e.target === this.dom.overlayEl) this.hidePalette();
     });
 
+    // Bing検索カスタムイベントをリッスン
+    this.dom.inputEl.addEventListener('palette-bing-search', (e: any) => {
+      this.runBingSearch();
+    });
+
     // オートコンプリートの構築（初回のみ）
     if (!this.dom.autocompleteEl) {
       this.autocomplete.buildAutocomplete();
@@ -225,6 +231,9 @@ class CommandPaletteApp {
    */
   bootstrap(): void {
     try {
+      // エラーハンドリングを最初に初期化
+      initializeErrorHandling();
+      
       // ストレージを初期化
       initializeStorage();
       
@@ -239,22 +248,59 @@ class CommandPaletteApp {
       
       // メニューを登録
       if (typeof GM_registerMenuCommand === 'function') {
-        GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
-        GM_registerMenuCommand('設定', () => this.openSettings());
-        GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
-        GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
-        GM_registerMenuCommand('サンプルデータを追加', () => addSampleData());
+        GM_registerMenuCommand('サイトマネージャを開く', () => {
+          try {
+            this.openManager();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'OPEN_MANAGER_ERROR');
+          }
+        });
+        GM_registerMenuCommand('設定', () => {
+          try {
+            this.openSettings();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'OPEN_SETTINGS_ERROR');
+          }
+        });
+        GM_registerMenuCommand('現在のページを追加', () => {
+          try {
+            this.runAddCurrent();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.STORAGE, ErrorLevel.MEDIUM, 'ADD_CURRENT_PAGE_ERROR');
+          }
+        });
+        GM_registerMenuCommand('URLをコピー', async () => {
+          try {
+            await this.paletteCore.copyUrl();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.PERMISSION, ErrorLevel.MEDIUM, 'COPY_URL_ERROR');
+          }
+        });
+        GM_registerMenuCommand('サンプルデータを追加', () => {
+          try {
+            addSampleData();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.STORAGE, ErrorLevel.MEDIUM, 'ADD_SAMPLE_DATA_ERROR');
+          }
+        });
       }
       
       // 自動オープンをチェック
       if (shouldAutoOpen()) {
-        setTimeout(() => this.openPalette(), 120);
+        setTimeout(() => {
+          try {
+            this.openPalette();
+          } catch (error) {
+            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'AUTO_OPEN_ERROR');
+          }
+        }, 120);
       }
       
       // 二重ハンドラを削除（main.tsのハンドラは不要になった）
       window.removeEventListener('keydown', this.updateHotkeyHandler, true);
     } catch (error) {
       console.error('[CommandPalette] Bootstrap error:', error);
+      handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.HIGH, 'BOOTSTRAP_ERROR');
     }
   }
 }

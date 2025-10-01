@@ -20,13 +20,17 @@
     'use strict';
 
     /**
+     * 状態管理クラス
+     */
+    /**
      * グローバル状態の初期化
      */
     const createInitialState = () => ({
         isOpen: false,
         currentItems: [],
         activeIndex: 0,
-        cachedSettings: null
+        cachedSettings: null,
+        lastUpdated: Date.now()
     });
     /**
      * DOM要素の初期化
@@ -54,7 +58,8 @@
     const createInitialAutocompleteState = () => ({
         items: [],
         index: -1,
-        isVisible: false
+        isVisible: false,
+        lastUpdated: Date.now()
     });
 
     const defaultSites = [
@@ -180,19 +185,90 @@
         MENU_HIDE_DELAY: 150
     };
 
-    const STORAGE_KEY = 'vm_sites_palette__sites';
-    const SETTINGS_KEY = 'vm_sites_palette__settings_v2';
-    const FAVCACHE_KEY = 'vm_sites_palette__favcache_v1';
-    const USAGE_KEY = 'vm_sites_palette__usage_v1';
+    // ストレージキーの定数
+    const STORAGE_KEYS = {
+        SITES: 'vm_sites_palette__sites',
+        SETTINGS: 'vm_sites_palette__settings_v2',
+        FAVCACHE: 'vm_sites_palette__favcache_v1',
+        USAGE: 'vm_sites_palette__usage_v1'
+    };
+    // キャッシュ関連の定数
+    const CACHE_TTL = 5 * 60 * 1000; // 5分
+    const MAX_CACHE_SIZE = 1000;
+    const ID_PREFIX = 'site';
     /**
      * ストレージ操作の基底クラス
      */
     class StorageBase {
-        get(defaultValue) {
-            return GM_getValue(this.getStorageKey(), defaultValue);
+        constructor() {
+            this.cache = new Map();
         }
+        /**
+         * データを取得（キャッシュ付き）
+         */
+        get(defaultValue, useCache = false) {
+            const key = this.getStorageKey();
+            if (useCache) {
+                const cached = this.cache.get(key);
+                if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+                    return cached.data;
+                }
+            }
+            const data = GM_getValue(key, defaultValue);
+            if (useCache) {
+                this.setCache(key, data);
+            }
+            return data;
+        }
+        /**
+         * データを設定
+         */
         set(value) {
-            GM_setValue(this.getStorageKey(), value);
+            const key = this.getStorageKey();
+            GM_setValue(key, value);
+            this.updateCache(key, value);
+        }
+        /**
+         * キャッシュを設定
+         */
+        setCache(key, data) {
+            this.cache.set(key, {
+                data,
+                timestamp: Date.now()
+            });
+            // キャッシュサイズを制限
+            if (this.cache.size > MAX_CACHE_SIZE) {
+                this.pruneCache();
+            }
+        }
+        /**
+         * キャッシュを更新
+         */
+        updateCache(key, data) {
+            const existing = this.cache.get(key);
+            if (existing) {
+                existing.data = data;
+                existing.timestamp = Date.now();
+            }
+            else {
+                this.setCache(key, data);
+            }
+        }
+        /**
+         * 古いキャッシュを削除
+         */
+        pruneCache() {
+            const entries = Array.from(this.cache.entries());
+            entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+            // 古い半分を削除
+            const toDelete = entries.slice(0, Math.floor(entries.length / 2));
+            toDelete.forEach(([key]) => this.cache.delete(key));
+        }
+        /**
+         * キャッシュをクリア
+         */
+        clearCache() {
+            this.cache.clear();
         }
     }
     /**
@@ -200,7 +276,7 @@
      */
     class SiteStorage extends StorageBase {
         getStorageKey() {
-            return STORAGE_KEY;
+            return STORAGE_KEYS.SITES;
         }
         /**
          * サイトを取得する
@@ -213,12 +289,13 @@
                 const norm = normalizeSite(item);
                 if (!norm)
                     continue;
-                if (item !== norm)
+                if (JSON.stringify(item) !== JSON.stringify(norm))
                     mutated = true;
                 normalized.push(norm);
             }
             if (!normalized.length) {
                 normalized.push(...defaultSites.map(normalizeSite).filter(Boolean));
+                mutated = true;
             }
             if (mutated) {
                 this.setSites(normalized, true);
@@ -236,36 +313,75 @@
          * サイトを追加する
          */
         addSite(site) {
-            const sites = this.getSites();
-            const newSite = normalizeSite({ ...site, id: site.id || generateId('site') });
-            if (newSite) {
+            try {
+                const sites = this.getSites();
+                const newSite = normalizeSite({ ...site, id: site.id || generateId() });
+                if (!newSite) {
+                    return { success: false, error: new Error('Invalid site data') };
+                }
                 sites.push(newSite);
                 this.setSites(sites, true);
+                return { success: true, data: newSite };
             }
-            return newSite;
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
         }
         /**
          * サイトを更新する
          */
         updateSite(id, updates) {
-            const sites = this.getSites();
-            const index = sites.findIndex(site => site.id === id);
-            if (index === -1)
-                return false;
-            sites[index] = { ...sites[index], ...updates };
-            this.setSites(sites, true);
-            return true;
+            try {
+                const sites = this.getSites();
+                const index = sites.findIndex(site => site.id === id);
+                if (index === -1) {
+                    return { success: false, error: new Error('Site not found') };
+                }
+                const updatedSite = { ...sites[index], ...updates };
+                sites[index] = updatedSite;
+                this.setSites(sites, true);
+                return { success: true, data: updatedSite };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
         }
         /**
          * サイトを削除する
          */
         deleteSite(id) {
-            const sites = this.getSites();
-            const filteredSites = sites.filter(site => site.id !== id);
-            if (filteredSites.length === sites.length)
-                return false;
-            this.setSites(filteredSites, true);
-            return true;
+            try {
+                const sites = this.getSites();
+                const filteredSites = sites.filter(site => site.id !== id);
+                if (filteredSites.length === sites.length) {
+                    return { success: false, error: new Error('Site not found') };
+                }
+                this.setSites(filteredSites, true);
+                return { success: true, data: true };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
+        }
+        /**
+         * サイトを検索
+         */
+        searchSites(query) {
+            if (!query.trim())
+                return this.getSites();
+            const normalizedQuery = query.toLowerCase().trim();
+            return this.getSites().filter(site => site.name.toLowerCase().includes(normalizedQuery) ||
+                site.url.toLowerCase().includes(normalizedQuery) ||
+                site.tags.some(tag => tag.toLowerCase().includes(normalizedQuery)));
         }
     }
     /**
@@ -273,7 +389,7 @@
      */
     class SettingsStorage extends StorageBase {
         getStorageKey() {
-            return SETTINGS_KEY;
+            return STORAGE_KEYS.SETTINGS;
         }
         /**
          * 設定を取得する
@@ -285,13 +401,33 @@
          * 設定を保存する
          */
         setSettings(settings) {
-            this.set({ ...this.getSettings(), ...settings });
+            try {
+                const currentSettings = this.getSettings();
+                const newSettings = { ...currentSettings, ...settings };
+                this.set(newSettings);
+                return { success: true, data: newSettings };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
         }
         /**
          * 設定をリセットする
          */
         resetSettings() {
-            this.set(defaultSettings);
+            try {
+                this.set(defaultSettings);
+                return { success: true, data: defaultSettings };
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
         }
     }
     /**
@@ -314,7 +450,7 @@
         /**
          * キャッシュを設定する
          */
-        setCache(cache) {
+        setCacheData(cache) {
             this.set(cache);
         }
         /**
@@ -323,7 +459,7 @@
         setCacheEntry(key, value) {
             const cache = this.getCache();
             cache[key] = value;
-            this.setCache(cache);
+            this.setCacheData(cache);
         }
         /**
          * キャッシュエントリを削除する
@@ -333,7 +469,7 @@
             if (!(key in cache))
                 return false;
             delete cache[key];
-            this.setCache(cache);
+            this.setCacheData(cache);
             return true;
         }
         /**
@@ -342,12 +478,18 @@
         clearCache() {
             this.set({});
         }
+        /**
+         * キャッシュサイズを取得
+         */
+        getCacheSize() {
+            return Object.keys(this.getCache()).length;
+        }
     }
     // ストレージインスタンスを作成
     const siteStorage = new SiteStorage();
     const settingsStorage = new SettingsStorage();
-    new CacheStorage(FAVCACHE_KEY);
-    const usageStorage = new CacheStorage(USAGE_KEY);
+    new CacheStorage(STORAGE_KEYS.FAVCACHE);
+    const usageStorage = new CacheStorage(STORAGE_KEYS.USAGE);
     /**
      * ストレージを初期化する
      */
@@ -377,17 +519,56 @@
      * 設定を保存する
      */
     const setSettings = (settings) => {
-        settingsStorage.setSettings(settings);
+        return settingsStorage.setSettings(settings);
     };
     /**
-     * 使用回数を増やす
+     * 使用回数を増やす（アトミック操作）
      */
     const incrementUsage = (id) => {
-        if (!id)
-            return;
-        const usageCache = getUsageCache();
-        const next = (usageCache[id] || 0) + 1;
-        setUsage(id, next);
+        if (!id) {
+            return { success: false, error: new Error('Invalid ID') };
+        }
+        // リトライカウンタと最大リトライ回数
+        let retryCount = 0;
+        const maxRetries = 3;
+        while (retryCount < maxRetries) {
+            try {
+                // 現在の使用回数を取得
+                const currentUsage = usageStorage.getCache();
+                const currentCount = currentUsage[id] || 0;
+                // 新しい使用回数を計算
+                const nextCount = currentCount + 1;
+                // アトミックに更新（楽観的ロック）
+                const updatedUsage = { ...currentUsage, [id]: nextCount };
+                usageStorage.setCacheData(updatedUsage);
+                // 更新が成功したか確認
+                const verificationUsage = usageStorage.getCache();
+                if (verificationUsage[id] === nextCount) {
+                    return { success: true, data: nextCount };
+                }
+                // 競合が検出された場合、リトライ
+                retryCount++;
+                // 短い遅延を入れてからリトライ
+                if (retryCount < maxRetries) {
+                    const delay = Math.pow(2, retryCount) * 10; // 指数バックオフ
+                    const start = Date.now();
+                    while (Date.now() - start < delay) {
+                        // 同期的に待機
+                    }
+                }
+            }
+            catch (error) {
+                return {
+                    success: false,
+                    error: error instanceof Error ? error : new Error(String(error))
+                };
+            }
+        }
+        // 最大リトライ回数を超えた場合
+        return {
+            success: false,
+            error: new Error('Failed to increment usage after maximum retries')
+        };
     };
     /**
      * 使用回数キャッシュを取得する
@@ -396,28 +577,29 @@
         return usageStorage.getCache();
     };
     /**
-     * 使用回数を設定する
-     */
-    const setUsage = (id, count) => {
-        usageStorage.setCacheEntry(id, count);
-    };
-    /**
      * 使用回数を整理する
      */
     const pruneUsage = (validIds) => {
-        const usageCache = getUsageCache();
-        const next = {};
-        let changed = false;
-        for (const id of Object.keys(usageCache)) {
-            if (validIds.has(id)) {
-                next[id] = usageCache[id];
+        try {
+            const usageCache = getUsageCache();
+            const next = {};
+            let removedCount = 0;
+            for (const [id, count] of Object.entries(usageCache)) {
+                if (validIds.has(id)) {
+                    next[id] = count;
+                }
+                else {
+                    removedCount++;
+                }
             }
-            else {
-                changed = true;
-            }
+            usageStorage.setCacheData(next);
+            return { success: true, data: removedCount };
         }
-        if (changed) {
-            usageStorage.setCache(next);
+        catch (error) {
+            return {
+                success: false,
+                error: error instanceof Error ? error : new Error(String(error))
+            };
         }
     };
     /**
@@ -430,7 +612,7 @@
         if (!next.type)
             next.type = 'site';
         if (!next.id)
-            next.id = generateId('site');
+            next.id = generateId();
         if (!Array.isArray(next.tags)) {
             if (typeof next.tags === 'string' && next.tags.trim()) {
                 next.tags = next.tags.split(/[,\s]+/).filter(Boolean);
@@ -448,10 +630,18 @@
     /**
      * IDを生成する
      */
-    function generateId(prefix) {
-        return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
+    function generateId() {
+        return `${ID_PREFIX}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
+    // faviconキャッシュの設定
+    const FAVICON_CACHE_CONFIG = {
+        MAX_SIZE: 500, // 最大キャッシュ数
+        MAX_AGE: 30 * 24 * 60 * 60 * 1000, // 30日（ミリ秒）
+        CLEANUP_INTERVAL: 7 * 24 * 60 * 60 * 1000 // 7日ごとにクリーンアップ
+    };
+    // 最後のクリーンアップ時刻
+    let lastCleanupTime = 0;
     /**
      * favicon要素を作成する
      */
@@ -484,7 +674,14 @@
         };
         const setFavCache = (origin, href) => {
             const favCache = getFavCache();
-            favCache[origin] = href;
+            favCache[origin] = {
+                href,
+                timestamp: Date.now()
+            };
+            // キャッシュサイズが制限を超えた場合はLRUで整理
+            if (Object.keys(favCache).length > FAVICON_CACHE_CONFIG.MAX_SIZE) {
+                pruneFavCache(favCache);
+            }
             window.GM_setValue?.('vm_sites_palette__favcache_v1', favCache);
         };
         const clearFavCacheOrigin = (origin) => {
@@ -496,7 +693,47 @@
                 window.GM_setValue?.('vm_sites_palette__favcache_v1', favCache);
             }
         };
-        const cached = origin && getFavCache()[origin] ? getFavCache()[origin] : null;
+        /**
+         * faviconキャッシュを整理（LRUアルゴリズム）
+         */
+        const pruneFavCache = (cache) => {
+            const now = Date.now();
+            // 期限切れのエントリを削除
+            for (const [origin, entry] of Object.entries(cache)) {
+                if (now - entry.timestamp > FAVICON_CACHE_CONFIG.MAX_AGE) {
+                    delete cache[origin];
+                }
+            }
+            // それでもサイズが大きい場合は古いものから削除
+            const entries = Object.entries(cache);
+            if (entries.length > FAVICON_CACHE_CONFIG.MAX_SIZE) {
+                // タイムスタンプでソートして古いものから削除
+                entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+                const toKeep = entries.slice(-500);
+                // キャッシュをクリアして再構築
+                for (const origin of Object.keys(cache)) {
+                    delete cache[origin];
+                }
+                for (const [origin, entry] of toKeep) {
+                    cache[origin] = entry;
+                }
+            }
+        };
+        /**
+         * 定期的なキャッシュクリーンアップ
+         */
+        const periodicCleanup = () => {
+            const now = Date.now();
+            if (now - lastCleanupTime > FAVICON_CACHE_CONFIG.CLEANUP_INTERVAL) {
+                const favCache = getFavCache();
+                pruneFavCache(favCache);
+                window.GM_setValue?.('vm_sites_palette__favcache_v1', favCache);
+                lastCleanupTime = now;
+            }
+        };
+        // 定期的なクリーンアップを実行
+        periodicCleanup();
+        const cached = origin && getFavCache()[origin] ? getFavCache()[origin].href : null;
         if (cached) {
             img.onload = () => wrap.appendChild(img);
             img.onerror = () => {
@@ -664,7 +901,8 @@
             this.lastScrollTop = 0;
             this.scrollDirection = 'none';
             this.visibleRangeCache = new Map();
-            this.maxCacheSize = 10;
+            this.maxCacheSize = 5;
+            this.maxItemHeightsSize = 1000; // アイテム高さキャッシュの最大サイズ
             this.containerHeight = options.containerHeight;
             this.itemHeight = options.itemHeight || 40;
             this.overscan = options.overscan || 5;
@@ -676,6 +914,7 @@
         setItems(items) {
             this.items = items;
             this.visibleRangeCache.clear(); // キャッシュをクリア
+            this.pruneItemHeightsCache(); // アイテム高さキャッシュを整理
             this.recalculatePositions();
         }
         /**
@@ -694,13 +933,15 @@
          * パフォーマンス最適化のため、差分計算を実装
          */
         recalculatePositions() {
-            this.itemPositions = [0];
+            const length = this.items.length;
+            this.itemPositions = new Array(length + 1);
+            this.itemPositions[0] = 0;
             let currentY = 0;
-            for (let i = 0; i < this.items.length; i++) {
+            for (let i = 0; i < length; i++) {
                 const item = this.items[i];
                 const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
                 currentY += height;
-                this.itemPositions.push(currentY);
+                this.itemPositions[i + 1] = currentY;
             }
             this.totalHeight = currentY;
         }
@@ -761,6 +1002,28 @@
             }
             this.visibleRangeCache.set(cacheKey, result);
             return result;
+        }
+        /**
+         * アイテム高さキャッシュを整理
+         */
+        pruneItemHeightsCache() {
+            const currentIds = new Set(this.items.map(item => item.id));
+            const toDelete = [];
+            // 現在のアイテムに存在しないIDを収集
+            for (const id of this.itemHeights.keys()) {
+                if (!currentIds.has(id)) {
+                    toDelete.push(id);
+                }
+            }
+            // 不要なエントリを削除
+            toDelete.forEach(id => this.itemHeights.delete(id));
+            // キャッシュサイズが大きすぎる場合は古いものを削除
+            if (this.itemHeights.size > this.maxItemHeightsSize) {
+                const entries = Array.from(this.itemHeights.entries());
+                const toKeep = entries.slice(-this.maxItemHeightsSize);
+                this.itemHeights.clear();
+                toKeep.forEach(([id, height]) => this.itemHeights.set(id, height));
+            }
         }
         /**
          * 表示すべきアイテムを取得
@@ -846,6 +1109,18 @@
             }
             scrollTop = Math.max(0, Math.min(scrollTop, this.totalHeight - this.containerHeight));
             container.scrollTop = scrollTop;
+        }
+        /**
+         * リソースをクリーンアップ
+         */
+        cleanup() {
+            this.items = [];
+            this.itemHeights.clear();
+            this.itemPositions = [];
+            this.visibleRangeCache.clear();
+            this.totalHeight = 0;
+            this.lastScrollTop = 0;
+            this.scrollDirection = 'none';
         }
     }
     /**
@@ -1563,6 +1838,10 @@
         createOverlayElement() {
             const overlay = document.createElement('div');
             overlay.className = 'overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+            overlay.setAttribute('aria-label', 'コマンドパレット');
+            overlay.setAttribute('tabindex', '-1');
             return overlay;
         }
         /**
@@ -1571,20 +1850,37 @@
         createPanelElement() {
             const panel = document.createElement('div');
             panel.className = 'panel';
+            panel.setAttribute('role', 'search');
+            panel.setAttribute('aria-label', 'サイト検索');
             // 入力要素を作成
             this.dom.inputEl = document.createElement('input');
             this.dom.inputEl.className = 'input';
             this.dom.inputEl.type = 'text';
+            this.dom.inputEl.setAttribute('role', 'combobox');
+            this.dom.inputEl.setAttribute('aria-expanded', 'false');
+            this.dom.inputEl.setAttribute('aria-autocomplete', 'list');
+            this.dom.inputEl.setAttribute('aria-label', 'サイト名、URL、またはタグで検索');
+            this.dom.inputEl.setAttribute('placeholder', 'サイト名、URL、またはタグで検索...');
+            this.dom.inputEl.setAttribute('autocomplete', 'off');
+            this.dom.inputEl.setAttribute('autocorrect', 'off');
+            this.dom.inputEl.setAttribute('autocapitalize', 'off');
+            this.dom.inputEl.setAttribute('spellcheck', 'false');
             // リスト要素を作成
             this.dom.listEl = document.createElement('div');
             this.dom.listEl.className = 'list';
+            this.dom.listEl.setAttribute('role', 'listbox');
+            this.dom.listEl.setAttribute('aria-label', '検索結果');
             // ヒント要素を作成
             this.dom.hintEl = document.createElement('div');
             this.dom.hintEl.className = 'hint';
+            this.dom.hintEl.setAttribute('role', 'status');
+            this.dom.hintEl.setAttribute('aria-live', 'polite');
             this.dom.hintLeftSpan = document.createElement('span');
             this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
+            this.dom.hintLeftSpan.setAttribute('aria-hidden', 'true');
             const rightSpan = document.createElement('span');
-            rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
+            rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0" role="button" aria-label="サイトマネージャを開く">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0" role="button" aria-label="設定を開く">設定</span> · ⌘P / Ctrl+P';
+            rightSpan.setAttribute('aria-hidden', 'true');
             // nullチェックを追加
             if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
                 this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
@@ -1641,8 +1937,15 @@
             item.className = 'item';
             item.dataset.index = index.toString();
             item.dataset.id = entry.id;
+            item.setAttribute('role', 'option');
+            item.setAttribute('aria-selected', 'false');
+            item.setAttribute('tabindex', '-1');
+            // アクセシビリティ用のラベル
+            const ariaLabel = `${entry.name} - ${entry.url}${entry.tags.length > 0 ? `。タグ: ${entry.tags.join(', ')}` : ''}`;
+            item.setAttribute('aria-label', ariaLabel);
             // ファビコンを作成
             const favicon = createFaviconEl(entry);
+            favicon.setAttribute('aria-hidden', 'true');
             item.appendChild(favicon);
             // 名前とURLのコンテナを作成
             const info = document.createElement('div');
@@ -1650,22 +1953,26 @@
             const name = document.createElement('div');
             name.className = 'name';
             name.textContent = entry.name;
+            name.setAttribute('aria-hidden', 'true');
             // コマンドバッジを追加
             if (entry.type === 'command') {
                 const badge = document.createElement('span');
                 badge.className = 'command-badge';
                 badge.textContent = 'CMD';
+                badge.setAttribute('aria-label', 'コマンド');
                 name.appendChild(badge);
             }
             const url = document.createElement('div');
             url.className = 'url';
             url.textContent = entry.url;
+            url.setAttribute('aria-hidden', 'true');
             info.appendChild(name);
             info.appendChild(url);
             // タグバッジを追加（表示数制限付き）
             if (entry.tags && entry.tags.length > 0) {
                 const tagBadges = document.createElement('div');
                 tagBadges.className = 'tag-badges';
+                tagBadges.setAttribute('aria-hidden', 'true');
                 const maxTags = 3;
                 const visibleTags = entry.tags.slice(0, maxTags);
                 const remainingCount = entry.tags.length - maxTags;
@@ -1674,6 +1981,7 @@
                     const tagEl = document.createElement('span');
                     tagEl.className = 'tag';
                     tagEl.textContent = tag;
+                    tagEl.setAttribute('aria-label', `タグ: ${tag}`);
                     tagBadges.appendChild(tagEl);
                 });
                 // 残りのタグ数を表示
@@ -1700,11 +2008,19 @@
             items.forEach((item, index) => {
                 if (index === activeIndex) {
                     item.classList.add('active');
+                    item.setAttribute('aria-selected', 'true');
+                    item.setAttribute('tabindex', '0');
                 }
                 else {
                     item.classList.remove('active');
+                    item.setAttribute('aria-selected', 'false');
+                    item.setAttribute('tabindex', '-1');
                 }
             });
+            // 入力フィールドのaria-expandedを更新
+            if (this.dom.inputEl) {
+                this.dom.inputEl.setAttribute('aria-expanded', items.length > 0 ? 'true' : 'false');
+            }
             // 仮想スクロールの場合はアクティブアイテムまでスクロール
             if (this.virtualScrollManager && this.virtualScrollContainer) {
                 const activeItem = items[activeIndex];
@@ -1758,6 +2074,8 @@
             if (!scored.length) {
                 const empty = document.createElement('div');
                 empty.className = 'empty';
+                empty.setAttribute('role', 'status');
+                empty.setAttribute('aria-live', 'polite');
                 empty.textContent = hasQuery ? '一致なし' : 'サイトが登録されていません。サイトマネージャで追加してください。';
                 this.dom.listEl.appendChild(empty);
                 return;
@@ -1969,6 +2287,12 @@
         };
         return s.replace(/[&<>"']/g, m => escapeMap[m] || m);
     };
+    /**
+     * 正規表現をエスケープする
+     */
+    const escapeRegex = (str) => {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
 
     /**
      * タグフィルタを抽出する
@@ -2049,17 +2373,22 @@
      * エントリをスコアリングする
      */
     const scoreEntries = (entries, query, usageCache) => {
-        const base = entries.map(e => ({ entry: e, score: 0 }));
+        const base = new Array(entries.length);
+        for (let i = 0; i < entries.length; i++) {
+            base[i] = { entry: entries[i], score: 0 };
+        }
         if (!query) {
-            base.forEach(item => { item.score = 0.0001 + getUsageBoost(item.entry, usageCache); });
+            for (let i = 0; i < base.length; i++) {
+                base[i].score = 0.0001 + getUsageBoost(base[i].entry, usageCache);
+            }
         }
         else {
             const matcher = createFuzzyMatcher(query);
-            base.forEach(item => {
-                const entry = item.entry;
+            for (let i = 0; i < base.length; i++) {
+                const entry = base[i].entry;
                 const score = Math.max(matcher(entry.name || ''), matcher(entry.url || '') - 4, matcher((entry.tags || []).join(' ')) - 2);
-                item.score = score === -Infinity ? -Infinity : score + getUsageBoost(item.entry, usageCache);
-            });
+                base[i].score = score === -Infinity ? -Infinity : score + getUsageBoost(base[i].entry, usageCache);
+            }
         }
         const filtered = base.filter(item => item.score > -Infinity);
         filtered.sort((a, b) => b.score - a.score);
@@ -2120,12 +2449,6 @@
         };
     };
     /**
-     * 正規表現をエスケープする
-     */
-    const escapeRegex = (str) => {
-        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    };
-    /**
      * フィルタリングとスコアリングを一度に行う
      */
     const filterAndScoreEntries = (entries, query, usageCache) => {
@@ -2138,7 +2461,8 @@
      * ユーザーインタラクションの処理、イベントリスナーの管理などを行う
      */
     class PaletteEventHandler {
-        constructor(state, dom, onExecuteEntry, onVirtualScroll, onEscape, onOpenManager, onOpenSettings) {
+        constructor(state, dom, onExecuteEntry, onVirtualScroll, onEscape, onOpenManager, onOpenSettings, onBingSearch) {
+            this.onBingSearch = () => { };
             this.onRenderList = () => { };
             this.onUpdateActive = () => { };
             this.state = state;
@@ -2148,8 +2472,9 @@
             this.onEscape = onEscape;
             this.onOpenManager = onOpenManager;
             this.onOpenSettings = onOpenSettings;
-            // デバウンスされたレンダリング関数を作成
-            this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
+            this.onBingSearch = onBingSearch || (() => { });
+            // デバウンスされたレンダリング関数を作成（統一された遅延時間）
+            this.debouncedRenderList = debounce(() => this.performRenderList(), 100);
         }
         /**
          * イベントリスナーを設定
@@ -2173,12 +2498,8 @@
                 inputId: this.dom.inputEl.id,
                 inputClasses: this.dom.inputEl.className
             });
-            // 入力イベント
+            // 入力イベント（統一されたデバウンス処理）
             this.dom.inputEl.addEventListener('input', (e) => {
-                console.log('[Debug] Input event', {
-                    value: this.dom.inputEl?.value,
-                    event: e
-                });
                 this.state.activeIndex = 0;
                 this.renderList();
             });
@@ -2186,41 +2507,25 @@
             EventListeners.addKeydown(this.dom.inputEl, (e) => {
                 this.handleInputKeydown(e);
             });
-            // キープレスイベント（英字入力の診断用）
-            this.dom.inputEl.addEventListener('keypress', (e) => {
-                console.log('[Debug] Keypress event', {
-                    key: e.key,
-                    charCode: e.charCode,
-                    keyCode: e.keyCode,
-                    which: e.which,
-                    value: this.dom.inputEl?.value
-                });
-            });
             // 入力フィールドがフォーカスされたときの処理
             this.dom.inputEl.addEventListener('focus', (e) => {
-                console.log('[Debug] Input field focused', {
-                    value: this.dom.inputEl?.value,
-                    event: e
-                });
+                // フォーカス処理
             });
             // コンポジションイベント（日本語入力など）
             this.dom.inputEl.addEventListener('compositionstart', (e) => {
-                console.log('[Debug] Composition start', {
-                    value: this.dom.inputEl?.value,
-                    event: e
-                });
+                // コンポジション開始時にフラグを設定
+                this.dom.inputEl.isComposing = true;
+            });
+            this.dom.inputEl.addEventListener('compositionupdate', (e) => {
+                // コンポジション更新中は検索を実行しない
+                this.dom.inputEl.isComposing = true;
             });
             this.dom.inputEl.addEventListener('compositionend', (e) => {
-                console.log('[Debug] Composition end', {
-                    value: this.dom.inputEl?.value,
-                    event: e
-                });
+                // コンポジション終了時にフラグを解除して検索を実行
+                this.dom.inputEl.isComposing = false;
                 this.state.activeIndex = 0;
                 this.renderList();
             });
-            // 入力フィールドのIMEモードを確実に設定
-            this.dom.inputEl.setAttribute('ime-mode', 'active');
-            this.dom.inputEl.style.imeMode = 'active';
         }
         /**
          * リストのイベントリスナーを設定
@@ -2296,20 +2601,31 @@
          * 入力フィールドのキーダウンイベントを処理
          */
         handleInputKeydown(e) {
-            // デバッグログ：キー入力の詳細
-            console.log('[Debug] Keydown event', {
-                key: e.key,
-                keyCode: e.keyCode,
-                which: e.which,
-                code: e.code,
-                altKey: e.altKey,
-                ctrlKey: e.ctrlKey,
-                metaKey: e.metaKey,
-                shiftKey: e.shiftKey,
-                currentItems: this.state.currentItems ? this.state.currentItems.length : 0,
-                activeIndex: this.state.activeIndex
-            });
-            // まず、特殊キーの処理
+            // 日本語入力中は一部のキーのみを処理
+            const isComposing = this.dom.inputEl.isComposing || e.isComposing;
+            // Meta+EnterでBing検索（日本語入力中も有効）
+            if (e.key === 'Enter' && e.metaKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                this.handleBingSearch();
+                return;
+            }
+            // 日本語入力中はEnterキーとEscキーのみを処理
+            if (isComposing) {
+                if (e.key === 'Enter') {
+                    // 日本語入力中のEnterは変換確定なので、デフォルト動作を許可
+                    return;
+                }
+                if (e.key === 'Escape') {
+                    // 日本語入力中のEscapeは変換キャンセル
+                    e.preventDefault();
+                    this.onEscape();
+                    return;
+                }
+                // その他のキーはデフォルト動作を許可
+                return;
+            }
+            // 通常時のキー処理
             switch (e.key) {
                 case 'ArrowDown':
                     if (this.state.currentItems && this.state.currentItems.length > 0) {
@@ -2340,12 +2656,21 @@
                     break;
                 case 'Tab':
                     e.preventDefault();
-                    // タグ選択機能はオートコンプリート機能に統一されたため、ここでは何もしない
+                    // タグ選択機能はオートコンプリート機能に統合されたため、ここでは何もしない
                     break;
-                default:
-                    // 英数字やその他の文字入力はデフォルトの動作を許可
-                    console.log('[Debug] Allowing default behavior for key:', e.key);
-                    // 何もしないでデフォルトの動作を許可
+                case 'Home':
+                    e.preventDefault();
+                    if (this.state.currentItems && this.state.currentItems.length > 0) {
+                        this.state.activeIndex = 0;
+                        this.updateActive();
+                    }
+                    break;
+                case 'End':
+                    e.preventDefault();
+                    if (this.state.currentItems && this.state.currentItems.length > 0) {
+                        this.state.activeIndex = this.state.currentItems.length - 1;
+                        this.updateActive();
+                    }
                     break;
             }
         }
@@ -2449,6 +2774,18 @@
             this.getUsageCache = callback;
         }
         /**
+         * Bing検索コールバックを設定
+         */
+        setBingSearchCallback(callback) {
+            this.onBingSearch = callback;
+        }
+        /**
+         * Bing検索を処理
+         */
+        handleBingSearch() {
+            this.onBingSearch();
+        }
+        /**
          * イベントリスナーをクリーンアップ
          */
         cleanup() {
@@ -2469,7 +2806,7 @@
             this.openSettingsCallback = openSettingsCallback;
             // UIとイベントハンドラを初期化
             this.ui = new PaletteUI(state, dom);
-            this.eventHandler = new PaletteEventHandler(state, dom, onExecuteEntry, (position) => this.handleVirtualScroll(position), () => this.hidePalette(), () => this.openManager(), () => this.openSettings());
+            this.eventHandler = new PaletteEventHandler(state, dom, onExecuteEntry, (position) => this.handleVirtualScroll(position), () => this.hidePalette(), () => this.openManager(), () => this.openSettings(), () => this.handleBingSearch());
             // コールバックを設定
             this.setupCallbacks();
             // 仮想スクロールハンドラを設定
@@ -2487,6 +2824,7 @@
             });
             this.eventHandler.setGetEntriesCallback(() => this.getEntries());
             this.eventHandler.setGetUsageCacheCallback(() => this.getUsageCache());
+            this.eventHandler.setBingSearchCallback(() => this.handleBingSearch());
         }
         /**
          * Shadow Rootホストを確保する
@@ -2579,6 +2917,18 @@
          */
         openSettings() {
             this.openSettingsCallback();
+        }
+        /**
+         * Bing検索を処理
+         */
+        handleBingSearch() {
+            // このメソッドはmain.tsのrunBingSearchを呼び出す必要がある
+            // しかし、直接参照できないので、代わりにカスタムイベントを発行
+            const event = new CustomEvent('palette-bing-search', {
+                bubbles: true,
+                detail: { query: this.ui.getInputValue() }
+            });
+            this.dom.inputEl?.dispatchEvent(event);
         }
         /**
          * エントリーを取得
@@ -2729,6 +3079,108 @@
                 parentPath: parentPath || undefined
             };
         });
+    };
+
+    /**
+     * セキュリティ関連のユーティリティ関数
+     */
+    /**
+     * 正規表現の複雑さを検証し、安全な正規表現に変換する
+     * @param pattern 検証する正規表現パターン
+     * @param maxLength パターンの最大長（デフォルト100文字）
+     * @returns 安全な正規表現パターン、または安全でない場合はnull
+     */
+    const sanitizeRegex = (pattern, maxLength = 100) => {
+        // パターン長のチェック
+        if (!pattern || pattern.length > maxLength) {
+            return null;
+        }
+        // 危険な正規表現パターンのブラックリスト
+        const dangerousPatterns = [
+            // 原子的なグループのネスト
+            /\(.*\(\(.*\)\).*\)/,
+            // 再帰的なパターン
+            /\(\?\((.*)\)\)/,
+            // 多数の量指定子の連続
+            /(\*|\+|\?|\{[\d,]+\}){5,}/,
+            // 複雑な先読み/後読み
+            /(\(\?=.+\)|\(\?!.+\)|\(\?<=.+\)|\(\?<!.+\)){2,}/,
+            // バックトラッキングを多用するパターン
+            /(.+\*|.+[^\*]\+|.+[^\+]\?){2,}/
+        ];
+        // 危険なパターンをチェック
+        for (const dangerous of dangerousPatterns) {
+            if (dangerous.test(pattern)) {
+                return null;
+            }
+        }
+        // 特殊文字をエスケープして安全なパターンを作成
+        const escapedPattern = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return escapedPattern;
+    };
+    /**
+     * URLの妥当性を検証する
+     * @param url 検証するURL
+     * @returns 有効なURLの場合はtrue、無効な場合はfalse
+     */
+    const isValidUrl = (url) => {
+        try {
+            // URLの構文を検証
+            const parsedUrl = new URL(url);
+            // 許可されたプロトコルのみを許可
+            const allowedProtocols = ['http:', 'https:', 'ftp:', 'ftps:', 'mailto:', 'tel:'];
+            if (!allowedProtocols.includes(parsedUrl.protocol)) {
+                return false;
+            }
+            // javascript:プロトコルを明示的に拒否
+            if (parsedUrl.protocol === 'javascript:') {
+                return false;
+            }
+            return true;
+        }
+        catch {
+            // URLの構文が無効な場合
+            return false;
+        }
+    };
+    /**
+     * 入力文字列の長さと内容を検証する
+     * @param input 検証する入力文字列
+     * @param maxLength 最大長（デフォルト1000文字）
+     * @returns 有効な入力の場合はtrue、無効な場合はfalse
+     */
+    const validateInput = (input, maxLength = 1000) => {
+        if (!input || typeof input !== 'string') {
+            return false;
+        }
+        if (input.length > maxLength) {
+            return false;
+        }
+        // 制御文字（改行、タブを除く）をチェック
+        const controlCharsRegex = /[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/;
+        if (controlCharsRegex.test(input)) {
+            return false;
+        }
+        return true;
+    };
+    /**
+     * 安全な正規表現を作成する
+     * @param pattern 元のパターン文字列
+     * @param flags 正規表現フラグ
+     * @param maxLength パターンの最大長
+     * @returns 安全な正規表現オブジェクト、または安全でない場合はnull
+     */
+    const createSafeRegex = (pattern, flags = 'i', maxLength = 100) => {
+        const sanitizedPattern = sanitizeRegex(pattern, maxLength);
+        if (!sanitizedPattern) {
+            return null;
+        }
+        try {
+            return new RegExp(sanitizedPattern, flags);
+        }
+        catch {
+            return null;
+        }
     };
 
     /**
@@ -3009,14 +3461,28 @@
          * 新規タグを作成
          */
         createNewTag(tagName) {
+            // 入力値の検証
+            if (!validateInput(tagName, 50)) { // タグ名は最大50文字
+                console.warn('Invalid tag name:', tagName);
+                return;
+            }
+            // タグ名のサニタイズ
+            const sanitizedTagName = tagName.trim()
+                .replace(/[<>]/g, '') // HTMLタグ文字を削除
+                .replace(/[\x00-\x1F\x7F]/g, '') // 制御文字を削除
+                .replace(/\s+/g, ' '); // 連続する空白を単一の空白に
+            if (!sanitizedTagName) {
+                console.warn('Tag name is empty after sanitization');
+                return;
+            }
             const currentValue = this.dom.inputEl.value;
             const hashIndex = currentValue.indexOf('#');
             if (hashIndex >= 0) {
                 const beforeHash = currentValue.slice(0, hashIndex);
-                this.dom.inputEl.value = beforeHash + '#' + tagName;
+                this.dom.inputEl.value = beforeHash + '#' + sanitizedTagName;
             }
             else {
-                this.dom.inputEl.value = '#' + tagName;
+                this.dom.inputEl.value = '#' + sanitizedTagName;
             }
             this.hideAutocomplete();
             this.dom.inputEl.focus();
@@ -3668,8 +4134,12 @@
             tr.querySelector('[data-del]')?.addEventListener('click', () => { tr.remove(); });
             tr.querySelector('[data-test]')?.addEventListener('click', () => {
                 const u = urlInput?.value.trim();
-                if (u)
+                if (u && isValidUrl(u)) {
                     window.open(u.includes('%s') ? u.replace(/%s/g, encodeURIComponent('test')) : u, '_blank');
+                }
+                else if (u) {
+                    showToast('無効なURLです');
+                }
             });
             this.dom.siteBodyEl.appendChild(tr);
         }
@@ -3699,14 +4169,30 @@
                 return;
             const previousSites = getSites();
             const sites = Array.from(this.dom.siteBodyEl.querySelectorAll('tr')).map((tr, index) => {
-                const name = tr.querySelector('input[data-field="name"]')?.value.trim() || '';
-                const url = tr.querySelector('input[data-field="url"]')?.value.trim() || '';
-                const tags = tr.querySelector('input[data-field="tags"]')?.value.split(/[,\s]+/).map((t) => t.trim()).filter(Boolean) || [];
+                const nameInput = tr.querySelector('input[data-field="name"]');
+                const urlInput = tr.querySelector('input[data-field="url"]');
+                const tagsInput = tr.querySelector('input[data-field="tags"]');
+                const name = nameInput?.value.trim() || '';
+                const url = urlInput?.value.trim() || '';
+                const tags = tagsInput?.value.split(/[,\s]+/).map((t) => t.trim()).filter(Boolean) || [];
+                // 入力値の検証
                 if (!name || !url)
                     return null;
+                // 名前の検証
+                if (!validateInput(name, 100)) { // 名前は最大100文字
+                    console.warn('Invalid site name:', name);
+                    return null;
+                }
+                // URLの検証
+                if (!isValidUrl(url)) {
+                    console.warn('Invalid site URL:', url);
+                    return null;
+                }
+                // タグの検証
+                const validTags = tags.filter(tag => validateInput(tag, 50)).slice(0, 10); // タグは最大10個、各50文字
                 const existing = tr.dataset.entryId && previousSites.find(s => s.id === tr.dataset.entryId);
                 const id = existing ? existing.id : (tr.dataset.entryId || `site-${Math.random().toString(36).slice(2, 10)}`);
-                return { id, type: 'site', name, url, tags };
+                return { id, type: 'site', name, url, tags: validTags };
             }).filter(Boolean);
             setSites(sites);
             pruneUsage(new Set([...sites.map(s => s.id)]));
@@ -3760,14 +4246,53 @@
                 showToast('無効なJSONです');
                 return;
             }
+            // インポートするデータのサイズを制限（最大1MB）
+            if (jsonText.length > 1024 * 1024) {
+                showToast('ファイルサイズが大きすぎます');
+                return;
+            }
             try {
                 const arr = JSON.parse(jsonText);
                 if (!Array.isArray(arr))
                     throw new Error('not array');
-                setSites(arr);
+                // インポートデータの検証とフィルタリング
+                const validSites = arr.filter((site) => {
+                    // 基本的な構造の検証
+                    if (!site || typeof site !== 'object')
+                        return false;
+                    if (site.type !== 'site')
+                        return false;
+                    if (!site.name || typeof site.name !== 'string')
+                        return false;
+                    if (!site.url || typeof site.url !== 'string')
+                        return false;
+                    // 入力値の検証
+                    if (!validateInput(site.name, 100))
+                        return false;
+                    if (!isValidUrl(site.url))
+                        return false;
+                    // タグの検証
+                    if (site.tags) {
+                        if (!Array.isArray(site.tags))
+                            return false;
+                        site.tags = site.tags.filter((tag) => typeof tag === 'string' && validateInput(tag, 50)).slice(0, 10);
+                    }
+                    else {
+                        site.tags = [];
+                    }
+                    return true;
+                });
+                if (validSites.length === 0) {
+                    showToast('有効なサイトデータがありません');
+                    return;
+                }
+                if (validSites.length < arr.length) {
+                    showToast(`${arr.length - validSites.length}件の無効なデータを除外しました`);
+                }
+                setSites(validSites);
                 pruneUsage(new Set(getSites().map(e => e.id)));
                 this.renderManager();
-                showToast('読み込みました');
+                showToast(`${validSites.length}件のサイトを読み込みました`);
             }
             catch (err) {
                 console.error('[CommandPalette] import parse error', err);
@@ -4122,12 +4647,122 @@
         }
     }
 
+    // 定数
+    const BING_SEARCH_URL$1 = 'https://www.bing.com/search?q=';
+    const SEARCH_PLACEHOLDER_TEMPLATE = ' に検索キーワードを入力…';
+    const DEFAULT_MESSAGES = {
+        EMPTY_QUERY: '検索キーワードを入力してください',
+        URL_COPIED: 'URLをコピーしました',
+        PAGE_ADDED: '現在のページを登録しました'
+    };
     /**
      * パレットのコアロジックを管理するクラス
      */
     class PaletteCore {
         constructor(inputEl) {
             this.inputEl = null;
+            this.settingsCache = null;
+            this.lastSettingsUpdate = 0;
+            this.SETTINGS_CACHE_TTL = 1000; // 1秒キャッシュ
+            /**
+             * 設定をキャッシュから取得
+             */
+            this.getCachedSettings = () => {
+                const now = Date.now();
+                if (this.settingsCache && (now - this.lastSettingsUpdate) < this.SETTINGS_CACHE_TTL) {
+                    return this.settingsCache;
+                }
+                this.settingsCache = getSettings();
+                this.lastSettingsUpdate = now;
+                return this.settingsCache;
+            };
+            /**
+             * 入力フィールドのプレースホルダーを更新
+             */
+            this.updateInputPlaceholder = (entryName) => {
+                if (this.inputEl) {
+                    this.inputEl.value = '';
+                    this.inputEl.placeholder = entryName + SEARCH_PLACEHOLDER_TEMPLATE;
+                }
+            };
+            /**
+             * 新しいタブでURLを開くかどうかを判定
+             */
+            this.shouldOpenNewTab = (mode, settings) => {
+                switch (mode) {
+                    case 'newtab':
+                        return true;
+                    case 'same':
+                        return false;
+                    case 'command':
+                        return true;
+                    case 'auto':
+                    default:
+                        return settings.enterOpens === 'newtab';
+                }
+            };
+            /**
+             * 新しいタブでURLを開く
+             */
+            this.openUrlInNewTab = (url) => {
+                try {
+                    GM_openInTab(url, { active: true, insert: true });
+                }
+                catch {
+                    // ポップアップブロック対策
+                    const newWindow = window.open(url, '_blank');
+                    if (!newWindow) {
+                        showToast('ポップアップがブロックされました。ブラウザの設定を確認してください。');
+                    }
+                }
+            };
+            /**
+             * 同じタブでURLを開く
+             */
+            this.openUrlInSameTab = (url) => {
+                try {
+                    location.assign(url);
+                }
+                catch {
+                    location.href = url;
+                }
+            };
+            /**
+             * 現在のページ情報を取得
+             */
+            this.getCurrentPageInfo = () => {
+                return {
+                    title: document.title || location.hostname,
+                    url: location.href
+                };
+            };
+            /**
+             * 設定キャッシュをクリア
+             */
+            this.clearSettingsCache = () => {
+                this.settingsCache = null;
+                this.lastSettingsUpdate = 0;
+            };
+            /**
+             * 入力値を取得
+             */
+            this.getInputValue = () => {
+                return this.inputEl?.value.trim() || '';
+            };
+            /**
+             * 入力値を設定
+             */
+            this.setInputValue = (value) => {
+                if (this.inputEl) {
+                    this.inputEl.value = value;
+                }
+            };
+            /**
+             * 入力フィールドにフォーカス
+             */
+            this.focusInput = () => {
+                this.inputEl?.focus();
+            };
             this.inputEl = inputEl || null;
         }
         /**
@@ -4140,115 +4775,223 @@
          * エントリを実行する
          */
         executeEntry(entry, shiftPressed, query) {
-            if (!entry)
-                return;
-            const settings = getSettings();
+            if (!entry) {
+                return { success: false, message: '無効なエントリです' };
+            }
+            const settings = this.getCachedSettings();
             const preferNew = settings.enterOpens === 'newtab';
             const openNew = shiftPressed ? !preferNew : preferNew;
-            let targetUrl = entry.url;
+            // 検索エントリの場合はクエリを確認
             if (entry.url && entry.url.includes('%s')) {
-                const q = query !== undefined ? query : this.inputEl?.value.trim() || '';
-                if (!q) {
-                    if (this.inputEl) {
-                        this.inputEl.value = '';
-                        this.inputEl.placeholder = `${entry.name} に検索キーワードを入力…`;
-                    }
-                    showToast('検索キーワードを入力してください');
+                const searchQuery = query !== undefined ? query : this.inputEl?.value.trim() || '';
+                if (!searchQuery) {
+                    this.updateInputPlaceholder(entry.name);
                     this.inputEl?.focus();
-                    return;
+                    return {
+                        success: false,
+                        requiresInput: true,
+                        message: DEFAULT_MESSAGES.EMPTY_QUERY
+                    };
                 }
-                targetUrl = entry.url.replace(/%s/g, encodeURIComponent(q));
+                // 検索クエリの検証
+                if (!validateInput(searchQuery, 200)) { // 検索クエリは最大200文字
+                    return {
+                        success: false,
+                        message: '検索キーワードが無効です'
+                    };
+                }
+                const targetUrl = entry.url.replace(/%s/g, encodeURIComponent(searchQuery));
+                // 生成されたURLの妥当性を検証
+                if (!isValidUrl(targetUrl)) {
+                    return {
+                        success: false,
+                        message: '無効なURLが生成されました'
+                    };
+                }
+                incrementUsage(entry.id);
+                this.openUrlWithPreference(targetUrl, openNew ? 'newtab' : 'same');
+                return { success: true };
             }
-            // パレットを閉じる処理は呼び出し元に委ねる
+            // 通常のURLエントリ
+            if (!isValidUrl(entry.url)) {
+                return {
+                    success: false,
+                    message: '無効なURLです'
+                };
+            }
             incrementUsage(entry.id);
-            this.openUrlWithPreference(targetUrl, openNew ? 'newtab' : 'same');
+            this.openUrlWithPreference(entry.url, openNew ? 'newtab' : 'same');
+            return { success: true };
         }
         /**
          * Bing検索を実行する
          */
         runBingSearch(shiftPressed, entry, query) {
-            const keywords = (query || '').trim();
+            const keywords = (query || this.inputEl?.value.trim() || '').trim();
             if (!keywords) {
-                showToast('検索キーワードを入力してください');
-                return;
+                return {
+                    success: false,
+                    message: DEFAULT_MESSAGES.EMPTY_QUERY
+                };
+            }
+            // 検索キーワードの検証
+            if (!validateInput(keywords, 200)) { // 検索キーワードは最大200文字
+                return {
+                    success: false,
+                    message: '検索キーワードが無効です'
+                };
             }
             const mode = shiftPressed ? 'newtab' : 'auto';
-            this.openUrlWithPreference(`https://www.bing.com/search?q=${encodeURIComponent(keywords)}`, mode);
+            const searchUrl = `${BING_SEARCH_URL$1}${encodeURIComponent(keywords)}`;
+            // エントリが指定されている場合は使用回数を増やす
+            if (entry) {
+                incrementUsage(entry.id);
+            }
+            this.openUrlWithPreference(searchUrl, mode);
+            return { success: true };
         }
         /**
          * 入力からBing検索を実行する
          */
         runBingSearchFromInput() {
-            const q = this.inputEl?.value.trim() || '';
-            if (!q) {
-                showToast('検索キーワードを入力してください');
-                return;
+            const query = this.inputEl?.value.trim() || '';
+            if (!query) {
+                return {
+                    success: false,
+                    message: DEFAULT_MESSAGES.EMPTY_QUERY
+                };
             }
-            this.openUrlWithPreference(`https://www.bing.com/search?q=${encodeURIComponent(q)}`);
+            // 検索クエリの検証
+            if (!validateInput(query, 200)) { // 検索クエリは最大200文字
+                return {
+                    success: false,
+                    message: '検索キーワードが無効です'
+                };
+            }
+            const searchUrl = `${BING_SEARCH_URL$1}${encodeURIComponent(query)}`;
+            this.openUrlWithPreference(searchUrl);
+            return { success: true };
         }
         /**
          * 設定に応じてURLを開く
          */
         openUrlWithPreference(url, mode = 'auto') {
-            const settings = getSettings();
-            const openNew = mode === 'newtab' ? true : mode === 'same' ? false : mode === 'command' ? true : settings.enterOpens === 'newtab';
+            const settings = this.getCachedSettings();
+            const openNew = this.shouldOpenNewTab(mode, settings);
             if (openNew) {
-                try {
-                    GM_openInTab(url, { active: true, insert: true });
-                }
-                catch {
-                    window.open(url, '_blank');
-                }
+                this.openUrlInNewTab(url);
             }
             else {
-                try {
-                    location.assign(url);
-                }
-                catch {
-                    location.href = url;
-                }
+                this.openUrlInSameTab(url);
             }
         }
         /**
          * 現在のページを追加する
          */
         runAddCurrent() {
+            const pageInfo = this.getCurrentPageInfo();
             // この処理はストレージモジュールに依存するため、ここでは実装しない
             // 呼び出し元で適切に処理する
-            showToast('現在のページを登録しました');
+            showToast(DEFAULT_MESSAGES.PAGE_ADDED);
+            return {
+                success: true,
+                data: pageInfo
+            };
         }
         /**
-         * URLをコピーする
+         * URLをコピーする（非同期対応）
          */
-        copyUrl() {
+        async copyUrl() {
+            const url = location.href;
             try {
-                GM_setClipboard(location.href);
-                showToast('URLをコピーしました');
+                GM_setClipboard(url);
+                showToast(DEFAULT_MESSAGES.URL_COPIED);
+                return { success: true };
             }
             catch {
-                navigator.clipboard?.writeText(location.href);
-                showToast('URLをコピーしました');
+                // フォールバックとしてClipboard APIを使用
+                if (navigator.clipboard) {
+                    try {
+                        await navigator.clipboard.writeText(url);
+                        showToast(DEFAULT_MESSAGES.URL_COPIED);
+                        return { success: true };
+                    }
+                    catch (clipboardError) {
+                        return { success: false, message: 'URLのコピーに失敗しました' };
+                    }
+                }
+                return { success: false, message: 'クリップボードAPIが利用できません' };
             }
         }
     }
 
-    // ホットキー判定関数
+    // 修飾キーの定数
+    const MODIFIER_KEYS = new Set(['Meta', 'Control', 'Alt', 'Shift']);
+    const INPUT_TAGS = new Set(['INPUT', 'TEXTAREA']);
+    const PALETTE_SELECTORS = ['#vm-cmd-palette-host', '.overlay', '.panel'];
+    const ALLOWED_KEYS = new Set([
+        'Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown',
+        'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete',
+        'Home', 'End', 'PageUp', 'PageDown', ' '
+    ]);
+    // キャッシュ用変数
+    let cachedSettings = null;
+    let lastSettingsUpdate = 0;
+    const SETTINGS_CACHE_TTL = 5000; // 5秒キャッシュ
+    // パレットが開いているかどうかを追跡する変数
+    let isPaletteOpen = false;
+    // グローバルホットキーコールバック
+    let globalHotkeyCallback = null;
+    // デバッグモードフラグ（本番環境ではfalseに設定）
+    const DEBUG_MODE = false;
+    /**
+     * デバッグログを出力（デバッグモード時のみ）
+     */
+    const debugLog = (message, data) => {
+    };
+    /**
+     * 設定をキャッシュから取得
+     */
+    const getCachedSettings = () => {
+        const now = Date.now();
+        if (cachedSettings && (now - lastSettingsUpdate) < SETTINGS_CACHE_TTL) {
+            return cachedSettings;
+        }
+        cachedSettings = getSettings();
+        cachedSettings.blocklist ?
+            cachedSettings.blocklist.split(',').map(s => s.trim()).filter(Boolean) :
+            [];
+        cachedSettings.autoOpenUrls || [];
+        lastSettingsUpdate = now;
+        return cachedSettings;
+    };
+    /**
+     * ホットキー判定関数
+     */
     const matchHotkey = (e, signature) => {
+        if (!signature)
+            return false;
         const parts = signature.split('+');
         const hasMeta = parts.includes('Meta');
         const hasCtrl = parts.includes('Control');
         const hasAlt = parts.includes('Alt');
         const hasShift = parts.includes('Shift');
-        const keyPart = parts.find(p => !['Meta', 'Control', 'Alt', 'Shift'].includes(p));
+        const keyPart = parts.find(p => !MODIFIER_KEYS.has(p));
+        // メインキーが修飾キーでないことを確認
+        if (keyPart && MODIFIER_KEYS.has(keyPart)) {
+            return false;
+        }
         return (e.metaKey === hasMeta &&
             e.ctrlKey === hasCtrl &&
             e.altKey === hasAlt &&
             e.shiftKey === hasShift &&
             (keyPart ? e.key === keyPart || e.code === keyPart : true));
     };
-    // ブロックサイト判定関数
+    /**
+     * ブロックサイト判定関数
+     */
     const isBlocked = () => {
-        const settings = getSettings();
+        const settings = getCachedSettings();
         if (!settings.blocklist)
             return false;
         const blocklist = settings.blocklist.split(',').map(s => s.trim()).filter(Boolean);
@@ -4256,26 +4999,35 @@
             return false;
         const hostname = window.location.hostname;
         const href = window.location.href;
-        return blocklist.some(pattern => {
-            try {
-                const regex = new RegExp(pattern, 'i');
-                return regex.test(hostname) || regex.test(href);
-            }
-            catch {
+        return blocklist.some((pattern) => {
+            const safeRegex = createSafeRegex(pattern, 'i');
+            if (!safeRegex) {
                 return false;
             }
+            return safeRegex.test(hostname) || safeRegex.test(href);
         });
     };
-    // パレットが開いているかどうかを追跡する変数
-    let isPaletteOpen = false;
-    // グローバルホットキーコールバック
-    let globalHotkeyCallback = null;
+    /**
+     * 自動オープンをチェック
+     */
+    const shouldAutoOpen = () => {
+        const settings = getCachedSettings();
+        if (!settings.autoOpenUrls || !settings.autoOpenUrls.length)
+            return false;
+        const currentUrl = window.location.href;
+        return settings.autoOpenUrls.some((url) => {
+            const safeRegex = createSafeRegex(url, 'i');
+            if (!safeRegex) {
+                return false;
+            }
+            return safeRegex.test(currentUrl);
+        });
+    };
     /**
      * パレットの開閉状態を設定する
      */
     const setPaletteOpenState = (isOpen) => {
         isPaletteOpen = isOpen;
-        console.log('[Debug] Palette state set to:', isOpen);
     };
     /**
      * グローバルホットキーコールバックを設定する
@@ -4284,21 +5036,111 @@
         globalHotkeyCallback = callback;
     };
     /**
-     * 自動オープンをチェック
+     * パレットが表示されているかチェック
      */
-    const shouldAutoOpen = () => {
-        const settings = getSettings();
-        if (!settings.autoOpenUrls || !settings.autoOpenUrls.length)
+    const isPaletteVisible = () => {
+        const overlayVisible = document.querySelector('.overlay');
+        return !!(overlayVisible &&
+            overlayVisible.classList.contains('visible') &&
+            overlayVisible.style.display !== 'none');
+    };
+    /**
+     * イベントがパレット内から発生したかチェック
+     */
+    const isEventFromPalette = (target) => {
+        if (!target)
             return false;
-        const currentUrl = window.location.href;
-        return settings.autoOpenUrls.some(url => {
-            try {
-                return new RegExp(url, 'i').test(currentUrl);
+        return PALETTE_SELECTORS.some(selector => target.closest(selector));
+    };
+    /**
+     * 入力フィールドかチェック
+     */
+    const isInputField = (target) => {
+        if (!target)
+            return false;
+        return INPUT_TAGS.has(target.tagName) || target.contentEditable === 'true';
+    };
+    /**
+     * 許可されたキーかチェック
+     */
+    const isAllowedKey = (e) => {
+        // 修飾キーのみの場合は許可
+        if (MODIFIER_KEYS.has(e.key)) {
+            return true;
+        }
+        // Meta+Enter（Cmd+Enter）は常に許可（Web検索用）
+        if (e.key === 'Enter' && e.metaKey) {
+            return true;
+        }
+        // 許可されたキーリストに含まれるかチェック
+        return ALLOWED_KEYS.has(e.key);
+    };
+    /**
+     * パレットが開いている場合のキーボードイベント処理
+     */
+    const handlePaletteOpenKeydown = (e) => {
+        const target = e.target;
+        const isInPalette = isEventFromPalette(target);
+        // パネル内からのイベントでない場合は無視
+        if (!isInPalette) {
+            // Escキーは常に許可（パネルを閉じるため）
+            if (e.key === 'Escape') {
+                return false; // Escキーは許可
             }
-            catch {
-                return false;
+            debugLog('Blocking key outside palette:', e.key);
+            e.preventDefault();
+            e.stopPropagation();
+            return true; // イベントを処理した
+        }
+        // パネル内の入力フィールドの場合は、ほぼすべてのキーを許可
+        if (isInputField(target)) {
+            debugLog('Allowing key in input field:', e.key);
+            return false; // イベントを処理しない
+        }
+        // 入力フィールド以外のパネル内要素では、特定のキーのみ許可
+        if (!isAllowedKey(e)) {
+            debugLog('Blocking key in palette:', e.key);
+            e.preventDefault();
+            e.stopPropagation();
+            return true; // イベントを処理した
+        }
+        debugLog('Allowing key in palette:', e.key);
+        return false; // イベントを処理しない
+    };
+    /**
+     * パレットが閉じている場合のキーボードイベント処理
+     */
+    const handlePaletteClosedKeydown = (e) => {
+        const target = e.target;
+        const tag = target?.tagName || '';
+        const editable = INPUT_TAGS.has(tag) || (target && target.isContentEditable);
+        debugLog('Palette is closed, checking for hotkey:', e.key);
+        if (editable) {
+            // 編集中の要素でもホットキーはチェックするが、それ以外はすべて許可
+            const settings = getCachedSettings();
+            if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+                e.preventDefault();
+                e.stopPropagation();
+                // パレットを開く処理を実行
+                if (globalHotkeyCallback) {
+                    globalHotkeyCallback();
+                }
+                return true; // イベントを処理した
             }
-        });
+            return false; // ホットキー以外はすべて許可
+        }
+        // 編集中でない要素の場合のみ、ホットキーをチェック
+        const settings = getCachedSettings();
+        if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
+            e.preventDefault();
+            e.stopPropagation();
+            // パレットを開く処理を実行
+            if (globalHotkeyCallback) {
+                globalHotkeyCallback();
+            }
+            return true; // イベントを処理した
+        }
+        return false; // ホットキー以外はすべて許可
     };
     /**
      * グローバルホットキーを設定する
@@ -4308,6 +5150,13 @@
         window.removeEventListener('keydown', onGlobalKeydown, true);
         // 新しいリスナーを追加（バブリングフェーズでキャプチャ）
         window.addEventListener('keydown', onGlobalKeydown, false);
+        // 設定キャッシュを更新
+        cachedSettings = settings;
+        settings.blocklist ?
+            settings.blocklist.split(',').map(s => s.trim()).filter(Boolean) :
+            [];
+        settings.autoOpenUrls || [];
+        lastSettingsUpdate = Date.now();
     };
     /**
      * グローバルキーボードイベントハンドラ
@@ -4318,191 +5167,134 @@
             if (isBlocked())
                 return;
             // パネルが実際に表示されているかをチェック
-            const overlayVisible = document.querySelector('.overlay');
-            const isActuallyVisible = overlayVisible &&
-                overlayVisible.classList.contains('visible') &&
-                overlayVisible.style.display !== 'none';
-            // デバッグログ
-            console.log('[Debug] Global keydown:', {
-                key: e.key,
-                code: e.code,
-                target: e.target,
-                targetTagName: e.target?.tagName,
-                targetClassName: e.target?.className,
-                isComposing: e.isComposing,
-                keyCode: e.keyCode,
-                isPaletteOpen,
-                isActuallyVisible,
-                overlayDisplay: overlayVisible?.style.display,
-                overlayClasses: overlayVisible?.className
-            });
-            // パネルが実際に表示されている場合のみ、パネル関連の処理を行う
+            const isActuallyVisible = isPaletteVisible();
+            if (DEBUG_MODE) ;
+            // パネルが表示されている場合と閉じている場合で処理を分岐
             if (isActuallyVisible) {
-                // パレット内の要素からのイベントかチェック
-                const target = e.target;
-                const isInPalette = target && (target.closest('#vm-cmd-palette-host') ||
-                    target.closest('.overlay') ||
-                    target.closest('.panel'));
-                console.log('[Debug] Palette is visible, checking if event is from palette:', isInPalette);
-                // パネル内からのイベントでない場合は無視
-                if (!isInPalette) {
-                    // Escキーは常に許可（パネルを閉じるため）
-                    if (e.key === 'Escape') {
-                        console.log('[Debug] Allowing Escape key outside palette');
-                        return; // Escキーは許可
-                    }
-                    console.log('[Debug] Blocking key outside palette:', e.key);
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return;
-                }
-                // パネル内の入力フィールドの場合は、ほぼすべてのキーを許可
-                const inputTarget = e.target;
-                const isInputField = inputTarget && (inputTarget.tagName === 'INPUT' ||
-                    inputTarget.tagName === 'TEXTAREA' ||
-                    inputTarget.contentEditable === 'true');
-                console.log('[Debug] Is input field:', isInputField);
-                // 入力フィールド内では基本的にすべてのキーを許可
-                if (isInputField) {
-                    console.log('[Debug] Allowing key in input field:', e.key);
-                    // 入力フィールド内では何も制限しない
-                    return;
-                }
-                // 入力フィールド以外のパネル内要素では、特定のキーのみ許可
-                const allowedKeys = [
-                    'Escape', 'Enter', 'Tab', 'ArrowUp', 'ArrowDown',
-                    'ArrowLeft', 'ArrowRight', 'Backspace', 'Delete',
-                    'Home', 'End', 'PageUp', 'PageDown', ' '
-                ];
-                // 修飾キーのみの場合は許可
-                if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) {
-                    return;
-                }
-                // Meta+Enter（Cmd+Enter）は常に許可（Web検索用）
-                if (e.key === 'Enter' && e.metaKey) {
-                    console.log('[Debug] Allowing Cmd+Enter for web search');
-                    return;
-                }
-                // 許可されたキーでない場合は無視
-                if (!allowedKeys.includes(e.key)) {
-                    console.log('[Debug] Blocking key in palette:', e.key);
-                    e.preventDefault();
-                    e.stopPropagation();
-                    return;
-                }
-                console.log('[Debug] Allowing key in palette:', e.key);
-                return; // パレットが開いている場合はここで処理終了
+                handlePaletteOpenKeydown(e);
             }
-            // パネルが閉じている場合は、基本的にすべてのキーを許可
-            console.log('[Debug] Palette is closed, checking for hotkey:', e.key);
-            // 編集中の要素ではホットキーのみをチェック
-            const mainTarget = e.target;
-            const tag = (mainTarget && mainTarget.tagName) || '';
-            const editable = ['INPUT', 'TEXTAREA'].includes(tag) ||
-                (mainTarget && mainTarget.isContentEditable);
-            if (editable) {
-                console.log('[Debug] Target is editable, only checking hotkey');
-                // 編集中の要素でもホットキーはチェックするが、それ以外はすべて許可
-                const settings = getSettings();
-                if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
-                    console.log('[Debug] Hotkey matched in editable element');
-                    e.preventDefault();
-                    e.stopPropagation();
-                    // パレットを開く処理を実行
-                    if (globalHotkeyCallback) {
-                        globalHotkeyCallback();
-                    }
-                }
-                // ホットキー以外はすべて許可
-                return;
+            else {
+                handlePaletteClosedKeydown(e);
             }
-            // 編集中でない要素の場合のみ、ホットキーをチェック
-            const settings = getSettings();
-            if (matchHotkey(e, settings.hotkeyPrimary) || matchHotkey(e, settings.hotkeySecondary)) {
-                console.log('[Debug] Hotkey matched, opening palette');
-                e.preventDefault();
-                e.stopPropagation();
-                // パレットを開く処理を実行
-                if (globalHotkeyCallback) {
-                    globalHotkeyCallback();
-                }
-            }
-            // ホットキー以外はすべて許可
         }
         catch (error) {
             console.error('[CommandPalette] Global hotkey error:', error);
         }
     };
 
+    // キーの定数
+    const NAVIGATION_KEYS = new Set(['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab']);
+    const BING_SEARCH_URL = 'https://www.bing.com/search?q=';
     /**
      * キーボードイベント処理を管理するクラス
      */
     class KeyboardHandler {
-        constructor(handlers) {
+        constructor(callbacks) {
             /**
              * 入力キーボードイベントを処理する
              */
             this.onInputKey = (e, currentItems, activeIndex, inputEl, isAutocompleteVisible) => {
+                // 日本語入力中は処理しない
                 if (e.isComposing || e.keyCode === 229) {
-                    return activeIndex;
+                    return { activeIndex, handled: false };
                 }
+                // オートコンプリート表示中の処理
                 if (isAutocompleteVisible) {
                     if (e.key === 'Escape') {
                         e.preventDefault();
-                        this.onHideAutocomplete();
-                        return activeIndex;
+                        this.callbacks.onHideAutocomplete();
+                        return { activeIndex, handled: true };
                     }
-                    return activeIndex;
+                    return { activeIndex, handled: false };
                 }
+                // Meta+EnterでBing検索
                 if (e.key === 'Enter' && e.metaKey) {
                     e.preventDefault();
-                    this.onBingSearch();
-                    return activeIndex;
+                    e.stopPropagation();
+                    this.callbacks.onBingSearch();
+                    return { activeIndex, handled: true };
                 }
+                // Escapeでパレットを閉じる
                 if (e.key === 'Escape') {
-                    this.onPaletteHide();
-                    return activeIndex;
+                    this.callbacks.onPaletteHide();
+                    return { activeIndex, handled: true };
                 }
+                // Tabでタグ補完
                 if (e.key === 'Tab' && !e.shiftKey && inputEl.value.trim() === '') {
                     e.preventDefault();
-                    const allTags = getAllTags();
-                    if (allTags.length > 0) {
-                        inputEl.value = '#' + allTags[0] + ' ';
-                        this.onRenderList();
-                        this.onShowAutocomplete(allTags[0]);
-                    }
-                    return activeIndex;
+                    this.handleTabCompletion(inputEl);
+                    return { activeIndex, handled: true };
                 }
+                // アイテムがない場合の処理
                 if (!currentItems.length) {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        const q = inputEl.value.trim();
-                        if (!q) {
-                            showToast('検索キーワードを入力してください');
-                            return activeIndex;
-                        }
-                        // Bing検索を実行
-                        window.open(`https://www.bing.com/search?q=${encodeURIComponent(q)}`, '_blank');
+                    return this.handleEmptyItems(e, inputEl, activeIndex);
+                }
+                // ナビゲーションキーの処理
+                return this.handleNavigationKeys(e, currentItems, activeIndex);
+            };
+            /**
+             * Tabキーでのタグ補完を処理
+             */
+            this.handleTabCompletion = (inputEl) => {
+                const allTags = getAllTags();
+                if (allTags.length > 0) {
+                    inputEl.value = '#' + allTags[0] + ' ';
+                    this.callbacks.onRenderList();
+                    this.callbacks.onShowAutocomplete(allTags[0]);
+                }
+            };
+            /**
+             * アイテムがない場合のキーボード処理
+             */
+            this.handleEmptyItems = (e, inputEl, activeIndex) => {
+                if (e.key === 'Enter') {
+                    // Meta+Enterはここでは処理しない（すでに上位で処理済み）
+                    if (e.metaKey) {
+                        return { activeIndex, handled: false };
                     }
-                    return activeIndex;
+                    e.preventDefault();
+                    const query = inputEl.value.trim();
+                    if (!query) {
+                        showToast('検索キーワードを入力してください');
+                        return { activeIndex, handled: true };
+                    }
+                    // Bing検索を実行
+                    window.open(`${BING_SEARCH_URL}${encodeURIComponent(query)}`, '_blank');
+                    return { activeIndex, handled: true };
                 }
+                return { activeIndex, handled: false };
+            };
+            /**
+             * ナビゲーションキーの処理
+             */
+            this.handleNavigationKeys = (e, currentItems, activeIndex) => {
                 let newActiveIndex = activeIndex;
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    newActiveIndex = (activeIndex + 1) % currentItems.length;
-                    this.onUpdateActive();
+                let handled = false;
+                switch (e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        newActiveIndex = (activeIndex + 1) % currentItems.length;
+                        this.callbacks.onUpdateActive();
+                        handled = true;
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        newActiveIndex = (activeIndex - 1 + currentItems.length) % currentItems.length;
+                        this.callbacks.onUpdateActive();
+                        handled = true;
+                        break;
+                    case 'Enter':
+                        // Meta+Enterはここでは処理しない（すでに上位で処理済み）
+                        if (e.metaKey) {
+                            return { activeIndex, handled: false };
+                        }
+                        e.preventDefault();
+                        const item = currentItems[activeIndex];
+                        this.callbacks.onExecuteEntry(item, e.shiftKey);
+                        handled = true;
+                        break;
                 }
-                else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    newActiveIndex = (activeIndex - 1 + currentItems.length) % currentItems.length;
-                    this.onUpdateActive();
-                }
-                else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const item = currentItems[activeIndex];
-                    this.onExecuteEntry(item, e.shiftKey);
-                }
-                return newActiveIndex;
+                return { activeIndex: newActiveIndex, handled };
             };
             /**
              * グローバルホットキーハンドラを更新する
@@ -4512,44 +5304,60 @@
                     e.preventDefault();
                     e.stopPropagation();
                     onOpenPalette();
+                    return true;
                 }
+                return false;
             };
             /**
              * オートコンプリートキーボード処理
              */
             this.handleAutocompleteKeydown = (e, autocompleteItems, autocompleteIndex, isVisible) => {
-                if (!isVisible) {
-                    return { newIndex: autocompleteIndex, shouldHide: false };
+                if (!isVisible || !autocompleteItems.length) {
+                    return { newIndex: autocompleteIndex, shouldHide: false, handled: false };
                 }
                 let newIndex = autocompleteIndex;
                 let shouldHide = false;
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    newIndex = (autocompleteIndex + 1) % autocompleteItems.length;
+                let handled = false;
+                switch (e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        newIndex = (autocompleteIndex + 1) % autocompleteItems.length;
+                        handled = true;
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        newIndex = (autocompleteIndex - 1 + autocompleteItems.length) % autocompleteItems.length;
+                        handled = true;
+                        break;
+                    case 'Enter':
+                        if (autocompleteIndex >= 0) {
+                            e.preventDefault();
+                            // アイテム選択処理は呼び出し元に委ねる
+                            handled = true;
+                        }
+                        break;
+                    case 'Escape':
+                        shouldHide = true;
+                        handled = true;
+                        break;
                 }
-                else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    newIndex = (autocompleteIndex - 1 + autocompleteItems.length) % autocompleteItems.length;
-                }
-                else if (e.key === 'Enter' && autocompleteIndex >= 0) {
-                    e.preventDefault();
-                    // アイテム選択処理は呼び出し元に委ねる
-                }
-                else if (e.key === 'Escape') {
-                    shouldHide = true;
-                }
-                return { newIndex, shouldHide };
+                return { newIndex, shouldHide, handled };
             };
-            this.onPaletteHide = handlers.onPaletteHide;
-            this.onPaletteOpen = handlers.onPaletteOpen;
-            this.onRenderList = handlers.onRenderList;
-            this.onUpdateActive = handlers.onUpdateActive;
-            this.onExecuteEntry = handlers.onExecuteEntry;
-            this.onShowAutocomplete = handlers.onShowAutocomplete;
-            this.onHideAutocomplete = handlers.onHideAutocomplete;
-            this.onBingSearch = handlers.onBingSearch;
+            this.callbacks = callbacks;
         }
     }
+    /**
+     * キーがナビゲーションキーかチェック
+     */
+    KeyboardHandler.isNavigationKey = (key) => {
+        return NAVIGATION_KEYS.has(key);
+    };
+    /**
+     * キーが修飾キーかチェック
+     */
+    KeyboardHandler.isModifierKey = (e) => {
+        return e.ctrlKey || e.metaKey || e.altKey || e.shiftKey;
+    };
 
     /**
      * テスト用のサンプルデータを作成
@@ -4680,6 +5488,312 @@
     };
 
     /**
+     * 統一されたエラーハンドリングシステム
+     */
+    // エラーの種類を定義
+    var ErrorType;
+    (function (ErrorType) {
+        ErrorType["VALIDATION"] = "validation";
+        ErrorType["STORAGE"] = "storage";
+        ErrorType["NETWORK"] = "network";
+        ErrorType["PERMISSION"] = "permission";
+        ErrorType["UNKNOWN"] = "unknown";
+    })(ErrorType || (ErrorType = {}));
+    // エラーレベルを定義
+    var ErrorLevel;
+    (function (ErrorLevel) {
+        ErrorLevel["LOW"] = "low";
+        ErrorLevel["MEDIUM"] = "medium";
+        ErrorLevel["HIGH"] = "high";
+        ErrorLevel["CRITICAL"] = "critical";
+    })(ErrorLevel || (ErrorLevel = {}));
+    /**
+     * カスタムエラークラス
+     */
+    class AppError extends Error {
+        constructor(message, type = ErrorType.UNKNOWN, level = ErrorLevel.MEDIUM, code, details, context) {
+            super(message);
+            this.name = 'AppError';
+            this.type = type;
+            this.level = level;
+            this.code = code;
+            this.details = details;
+            this.context = context;
+            this.timestamp = Date.now();
+            // スタックトレースを維持
+            if (Error.captureStackTrace) {
+                Error.captureStackTrace(this, AppError);
+            }
+        }
+        /**
+         * エラー情報をオブジェクトに変換
+         */
+        toErrorInfo() {
+            return {
+                type: this.type,
+                level: this.level,
+                message: this.message,
+                code: this.code,
+                details: this.details,
+                timestamp: this.timestamp,
+                stack: this.stack,
+                context: this.context
+            };
+        }
+        /**
+         * ユーザー向けのメッセージを取得
+         */
+        getUserMessage() {
+            switch (this.type) {
+                case ErrorType.VALIDATION:
+                    return '入力内容が無効です。確認して再度お試しください。';
+                case ErrorType.STORAGE:
+                    return 'データの保存に失敗しました。ブラウザのストレージ容量を確認してください。';
+                case ErrorType.NETWORK:
+                    return 'ネットワーク接続に問題があります。接続状態を確認してください。';
+                case ErrorType.PERMISSION:
+                    return '必要な権限がありません。ブラウザの設定を確認してください。';
+                default:
+                    return 'エラーが発生しました。再度お試しください。';
+            }
+        }
+    }
+    /**
+     * エラーハンドリングマネージャー
+     */
+    class ErrorHandlerManager {
+        constructor() {
+            this.handlers = [];
+            this.errorHistory = [];
+            this.maxHistorySize = 100;
+        }
+        /**
+         * シングルトンインスタンスを取得
+         */
+        static getInstance() {
+            if (!ErrorHandlerManager.instance) {
+                ErrorHandlerManager.instance = new ErrorHandlerManager();
+            }
+            return ErrorHandlerManager.instance;
+        }
+        /**
+         * エラーハンドラを登録
+         */
+        registerHandler(handler) {
+            this.handlers.push(handler);
+        }
+        /**
+         * エラーハンドラを削除
+         */
+        removeHandler(handler) {
+            const index = this.handlers.indexOf(handler);
+            if (index > -1) {
+                this.handlers.splice(index, 1);
+            }
+        }
+        /**
+         * エラーを処理
+         */
+        handleError(error) {
+            let errorInfo;
+            if (error instanceof AppError) {
+                errorInfo = error.toErrorInfo();
+            }
+            else if (error instanceof Error) {
+                errorInfo = {
+                    type: ErrorType.UNKNOWN,
+                    level: ErrorLevel.MEDIUM,
+                    message: error.message,
+                    timestamp: Date.now(),
+                    stack: error.stack
+                };
+            }
+            else {
+                errorInfo = error;
+            }
+            // エラー履歴に追加
+            this.addToHistory(errorInfo);
+            // 登録されたハンドラを実行
+            this.handlers.forEach(handler => {
+                try {
+                    handler.handle(errorInfo);
+                }
+                catch (handlerError) {
+                    console.error('[ErrorHandler] Handler error:', handlerError);
+                }
+            });
+            // コンソールに出力
+            this.logToConsole(errorInfo);
+        }
+        /**
+         * エラー履歴に追加
+         */
+        addToHistory(errorInfo) {
+            this.errorHistory.push(errorInfo);
+            // 履歴サイズを制限
+            if (this.errorHistory.length > this.maxHistorySize) {
+                this.errorHistory = this.errorHistory.slice(-this.maxHistorySize);
+            }
+        }
+        /**
+         * コンソールに出力
+         */
+        logToConsole(errorInfo) {
+            const logLevel = this.getLogLevel(errorInfo.level);
+            const message = `[${errorInfo.type.toUpperCase()}] ${errorInfo.message}`;
+            switch (logLevel) {
+                case 'error':
+                    console.error(message, errorInfo);
+                    break;
+                case 'warn':
+                    console.warn(message, errorInfo);
+                    break;
+                case 'info':
+                    console.info(message, errorInfo);
+                    break;
+                default:
+                    console.log(message, errorInfo);
+            }
+        }
+        /**
+         * エラーレベルに応じたログレベルを取得
+         */
+        getLogLevel(level) {
+            switch (level) {
+                case ErrorLevel.CRITICAL:
+                case ErrorLevel.HIGH:
+                    return 'error';
+                case ErrorLevel.MEDIUM:
+                    return 'warn';
+                case ErrorLevel.LOW:
+                    return 'info';
+                default:
+                    return 'log';
+            }
+        }
+        /**
+         * エラー履歴を取得
+         */
+        getErrorHistory() {
+            return [...this.errorHistory];
+        }
+        /**
+         * エラー履歴をクリア
+         */
+        clearHistory() {
+            this.errorHistory = [];
+        }
+    }
+    /**
+     * コンソールエラーハンドラ
+     */
+    class ConsoleErrorHandler {
+        handle(error) {
+            const level = error.level;
+            const message = `[${error.type.toUpperCase()}] ${error.message}`;
+            switch (level) {
+                case ErrorLevel.CRITICAL:
+                case ErrorLevel.HIGH:
+                    console.error(message, error);
+                    break;
+                case ErrorLevel.MEDIUM:
+                    console.warn(message, error);
+                    break;
+                case ErrorLevel.LOW:
+                    console.info(message, error);
+                    break;
+            }
+        }
+    }
+    /**
+     * ユーザー通知エラーハンドラ
+     */
+    class UserNotificationErrorHandler {
+        handle(error) {
+            // 重要度が中以上のエラーのみユーザーに通知
+            if (error.level === ErrorLevel.LOW)
+                return;
+            // エラーメッセージを表示
+            this.showErrorNotification(error);
+        }
+        showErrorNotification(error) {
+            // この実装はUIコンポーネントに依存するため、簡易的な実装
+            // 実際のアプリケーションでは、適切なUIコンポーネントを使用
+            // トースト通知の代替
+            if (typeof window !== 'undefined' && window.document) {
+                const toast = document.createElement('div');
+                toast.className = 'error-toast';
+                toast.textContent = this.getUserMessage(error);
+                toast.style.cssText = `
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #f44336;
+        color: white;
+        padding: 12px 20px;
+        border-radius: 4px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        z-index: 2147483647;
+        max-width: 300px;
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 14px;
+      `;
+                document.body.appendChild(toast);
+                // 3秒後に自動的に削除
+                setTimeout(() => {
+                    if (toast.parentNode) {
+                        toast.parentNode.removeChild(toast);
+                    }
+                }, 3000);
+            }
+        }
+        getUserMessage(error) {
+            switch (error.type) {
+                case ErrorType.VALIDATION:
+                    return '入力内容が無効です。確認して再度お試しください。';
+                case ErrorType.STORAGE:
+                    return 'データの保存に失敗しました。ブラウザのストレージ容量を確認してください。';
+                case ErrorType.NETWORK:
+                    return 'ネットワーク接続に問題があります。接続状態を確認してください。';
+                case ErrorType.PERMISSION:
+                    return '必要な権限がありません。ブラウザの設定を確認してください。';
+                default:
+                    return error.message || 'エラーが発生しました。再度お試しください。';
+            }
+        }
+    }
+    /**
+     * エラーハンドリングのユーティリティ関数
+     */
+    const handleError = (error, type = ErrorType.UNKNOWN, level = ErrorLevel.MEDIUM, code, details, context) => {
+        const manager = ErrorHandlerManager.getInstance();
+        if (typeof error === 'string') {
+            manager.handleError(new AppError(error, type, level, code, details, context));
+        }
+        else {
+            manager.handleError(error);
+        }
+    };
+    /**
+     * 初期化関数
+     */
+    const initializeErrorHandling = () => {
+        const manager = ErrorHandlerManager.getInstance();
+        // デフォルトのエラーハンドラを登録
+        manager.registerHandler(new ConsoleErrorHandler());
+        manager.registerHandler(new UserNotificationErrorHandler());
+        // グローバルエラーハンドラを設定
+        if (typeof window !== 'undefined') {
+            window.addEventListener('error', (event) => {
+                handleError(event.error || new Error(event.message), ErrorType.UNKNOWN, ErrorLevel.HIGH, 'GLOBAL_ERROR', { filename: event.filename, lineno: event.lineno, colno: event.colno });
+            });
+            window.addEventListener('unhandledrejection', (event) => {
+                handleError(event.reason instanceof Error ? event.reason : new Error(String(event.reason)), ErrorType.UNKNOWN, ErrorLevel.HIGH, 'UNHANDLED_PROMISE_REJECTION');
+            });
+        }
+    };
+
+    /**
      * アプリケーションメインクラス
      */
     class CommandPaletteApp {
@@ -4786,6 +5900,10 @@
                 if (e.target === this.dom.overlayEl)
                     this.hidePalette();
             });
+            // Bing検索カスタムイベントをリッスン
+            this.dom.inputEl.addEventListener('palette-bing-search', (e) => {
+                this.runBingSearch();
+            });
             // オートコンプリートの構築（初回のみ）
             if (!this.dom.autocompleteEl) {
                 this.autocomplete.buildAutocomplete();
@@ -4850,6 +5968,8 @@
          */
         bootstrap() {
             try {
+                // エラーハンドリングを最初に初期化
+                initializeErrorHandling();
                 // ストレージを初期化
                 initializeStorage();
                 // 設定を取得
@@ -4860,21 +5980,64 @@
                 setupGlobalHotkey(settings);
                 // メニューを登録
                 if (typeof GM_registerMenuCommand === 'function') {
-                    GM_registerMenuCommand('サイトマネージャを開く', () => this.openManager());
-                    GM_registerMenuCommand('設定', () => this.openSettings());
-                    GM_registerMenuCommand('現在のページを追加', () => this.runAddCurrent());
-                    GM_registerMenuCommand('URLをコピー', () => this.copyUrl());
-                    GM_registerMenuCommand('サンプルデータを追加', () => addSampleData());
+                    GM_registerMenuCommand('サイトマネージャを開く', () => {
+                        try {
+                            this.openManager();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'OPEN_MANAGER_ERROR');
+                        }
+                    });
+                    GM_registerMenuCommand('設定', () => {
+                        try {
+                            this.openSettings();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'OPEN_SETTINGS_ERROR');
+                        }
+                    });
+                    GM_registerMenuCommand('現在のページを追加', () => {
+                        try {
+                            this.runAddCurrent();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.STORAGE, ErrorLevel.MEDIUM, 'ADD_CURRENT_PAGE_ERROR');
+                        }
+                    });
+                    GM_registerMenuCommand('URLをコピー', async () => {
+                        try {
+                            await this.paletteCore.copyUrl();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.PERMISSION, ErrorLevel.MEDIUM, 'COPY_URL_ERROR');
+                        }
+                    });
+                    GM_registerMenuCommand('サンプルデータを追加', () => {
+                        try {
+                            addSampleData();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.STORAGE, ErrorLevel.MEDIUM, 'ADD_SAMPLE_DATA_ERROR');
+                        }
+                    });
                 }
                 // 自動オープンをチェック
                 if (shouldAutoOpen()) {
-                    setTimeout(() => this.openPalette(), 120);
+                    setTimeout(() => {
+                        try {
+                            this.openPalette();
+                        }
+                        catch (error) {
+                            handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.MEDIUM, 'AUTO_OPEN_ERROR');
+                        }
+                    }, 120);
                 }
                 // 二重ハンドラを削除（main.tsのハンドラは不要になった）
                 window.removeEventListener('keydown', this.updateHotkeyHandler, true);
             }
             catch (error) {
                 console.error('[CommandPalette] Bootstrap error:', error);
+                handleError(error instanceof Error ? error : String(error), ErrorType.UNKNOWN, ErrorLevel.HIGH, 'BOOTSTRAP_ERROR');
             }
         }
     }

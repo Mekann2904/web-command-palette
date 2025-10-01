@@ -6,7 +6,7 @@
 export interface VirtualScrollItem {
   id: string;
   height?: number;
-  data: any;
+  data: unknown;
 }
 
 export interface VirtualScrollOptions {
@@ -39,7 +39,8 @@ export class VirtualScrollManager {
   private lastScrollTop = 0;
   private scrollDirection: 'up' | 'down' | 'none' = 'none';
   private visibleRangeCache: Map<number, VirtualScrollPosition> = new Map();
-  private maxCacheSize = 10;
+  private maxCacheSize = 5;
+  private maxItemHeightsSize = 1000; // アイテム高さキャッシュの最大サイズ
 
   constructor(options: VirtualScrollOptions) {
     this.containerHeight = options.containerHeight;
@@ -54,6 +55,7 @@ export class VirtualScrollManager {
   setItems(items: VirtualScrollItem[]): void {
     this.items = items;
     this.visibleRangeCache.clear(); // キャッシュをクリア
+    this.pruneItemHeightsCache(); // アイテム高さキャッシュを整理
     this.recalculatePositions();
   }
 
@@ -75,14 +77,16 @@ export class VirtualScrollManager {
    * パフォーマンス最適化のため、差分計算を実装
    */
   private recalculatePositions(): void {
-    this.itemPositions = [0];
+    const length = this.items.length;
+    this.itemPositions = new Array(length + 1);
+    this.itemPositions[0] = 0;
     let currentY = 0;
 
-    for (let i = 0; i < this.items.length; i++) {
+    for (let i = 0; i < length; i++) {
       const item = this.items[i];
       const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
       currentY += height;
-      this.itemPositions.push(currentY);
+      this.itemPositions[i + 1] = currentY;
     }
 
     this.totalHeight = currentY;
@@ -151,6 +155,32 @@ export class VirtualScrollManager {
     this.visibleRangeCache.set(cacheKey, result);
 
     return result;
+  }
+
+  /**
+   * アイテム高さキャッシュを整理
+   */
+  private pruneItemHeightsCache(): void {
+    const currentIds = new Set(this.items.map(item => item.id));
+    const toDelete: string[] = [];
+    
+    // 現在のアイテムに存在しないIDを収集
+    for (const id of this.itemHeights.keys()) {
+      if (!currentIds.has(id)) {
+        toDelete.push(id);
+      }
+    }
+    
+    // 不要なエントリを削除
+    toDelete.forEach(id => this.itemHeights.delete(id));
+    
+    // キャッシュサイズが大きすぎる場合は古いものを削除
+    if (this.itemHeights.size > this.maxItemHeightsSize) {
+      const entries = Array.from(this.itemHeights.entries());
+      const toKeep = entries.slice(-this.maxItemHeightsSize);
+      this.itemHeights.clear();
+      toKeep.forEach(([id, height]) => this.itemHeights.set(id, height));
+    }
   }
 
   /**
@@ -251,6 +281,18 @@ export class VirtualScrollManager {
     scrollTop = Math.max(0, Math.min(scrollTop, this.totalHeight - this.containerHeight));
     container.scrollTop = scrollTop;
   }
+  /**
+   * リソースをクリーンアップ
+   */
+  cleanup(): void {
+    this.items = [];
+    this.itemHeights.clear();
+    this.itemPositions = [];
+    this.visibleRangeCache.clear();
+    this.totalHeight = 0;
+    this.lastScrollTop = 0;
+    this.scrollDirection = 'none';
+  }
 }
 
 /**
@@ -287,6 +329,22 @@ export function createVirtualScrollContainer(options: {
   container.appendChild(content);
 
   return { container, content, manager };
+}
+
+/**
+ * 仮想スクロールコンテナを破棄するヘルパー関数
+ */
+export function destroyVirtualScrollContainer(container: HTMLElement, manager: VirtualScrollManager): void {
+  // イベントリスナーを削除
+  container.removeEventListener('scroll', () => {});
+  
+  // マネージャーをクリーンアップ
+  manager.cleanup();
+  
+  // DOM要素をクリア
+  while (container.firstChild) {
+    container.removeChild(container.firstChild);
+  }
 }
 
 /**

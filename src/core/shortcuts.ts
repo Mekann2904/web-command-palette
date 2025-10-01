@@ -2,14 +2,55 @@
  * キーボードショートカット定義
  */
 
+// ショートカットカテゴリの型
+export type ShortcutCategory = 'navigation' | 'search' | 'utility' | 'management';
+
+// ショートカット実行結果の型
+export interface ShortcutExecutionResult {
+  success: boolean;
+  error?: Error;
+}
+
+// ショートカット競合情報の型
+export interface ShortcutConflict {
+  shortcut: string;
+  actions: string[];
+}
+
+// キーマッピングの型
+type KeyMapping = Record<string, string>;
+
+// カテゴリタイトルの型
+type CategoryTitles = Record<ShortcutCategory, string>;
+
 export interface ShortcutAction {
   id: string;
   name: string;
   description: string;
   keys: string[];
   handler: () => void | Promise<void>;
-  category: 'navigation' | 'search' | 'utility' | 'management';
+  category: ShortcutCategory;
 }
+
+// 定数
+const KEY_MAP: KeyMapping = {
+  ' ': 'Space',
+  'ArrowUp': 'Up',
+  'ArrowDown': 'Down',
+  'ArrowLeft': 'Left',
+  'ArrowRight': 'Right',
+  'Escape': 'Esc'
+};
+
+const CATEGORY_TITLES: CategoryTitles = {
+  navigation: '🧭 ナビゲーション',
+  search: '🔍 検索',
+  utility: '🛠️ ユーティリティ',
+  management: '⚙️ 管理'
+};
+
+const HELP_HEADER = '=== 利用可能なショートカット ===\n\n';
+const CONFLICTS_HEADER = '⚠️  衝突しているショートカット:\n';
 
 /**
  * ショートカットマネージャー
@@ -17,34 +58,78 @@ export interface ShortcutAction {
 export class ShortcutManager {
   private shortcuts: Map<string, ShortcutAction> = new Map();
   private activeShortcuts: Set<string> = new Set();
+  private keyToShortcutMap: Map<string, string[]> = new Map(); // キーからショートカットIDへのマップ
 
   /**
    * ショートカットを登録
    */
   register(shortcut: ShortcutAction): void {
     this.shortcuts.set(shortcut.id, shortcut);
+    this.updateKeyToShortcutMap(shortcut);
   }
 
   /**
    * ショートカットを登録解除
    */
   unregister(id: string): void {
-    this.shortcuts.delete(id);
+    const shortcut = this.shortcuts.get(id);
+    if (shortcut) {
+      this.removeShortcutFromKeyMap(shortcut);
+      this.shortcuts.delete(id);
+    }
   }
+
+  /**
+   * キーからショートカットへのマップを更新
+   */
+  private updateKeyToShortcutMap = (shortcut: ShortcutAction): void => {
+    for (const key of shortcut.keys) {
+      if (!this.keyToShortcutMap.has(key)) {
+        this.keyToShortcutMap.set(key, []);
+      }
+      const shortcuts = this.keyToShortcutMap.get(key)!;
+      if (!shortcuts.includes(shortcut.id)) {
+        shortcuts.push(shortcut.id);
+      }
+    }
+  };
+
+  /**
+   * キーマップからショートカットを削除
+   */
+  private removeShortcutFromKeyMap = (shortcut: ShortcutAction): void => {
+    for (const key of shortcut.keys) {
+      const shortcuts = this.keyToShortcutMap.get(key);
+      if (shortcuts) {
+        const index = shortcuts.indexOf(shortcut.id);
+        if (index > -1) {
+          shortcuts.splice(index, 1);
+        }
+        if (shortcuts.length === 0) {
+          this.keyToShortcutMap.delete(key);
+        }
+      }
+    }
+  };
 
   /**
    * ショートカットを実行
    */
-  async execute(id: string): Promise<boolean> {
+  async execute(id: string): Promise<ShortcutExecutionResult> {
     const shortcut = this.shortcuts.get(id);
-    if (!shortcut) return false;
+    if (!shortcut) {
+      return { success: false, error: new Error(`Shortcut not found: ${id}`) };
+    }
 
     try {
       await shortcut.handler();
-      return true;
+      return { success: true };
     } catch (error) {
       console.error(`[CommandPalette] Shortcut execution failed: ${id}`, error);
-      return false;
+      return {
+        success: false,
+        error: error instanceof Error ? error : new Error(String(error))
+      };
     }
   }
 
@@ -52,42 +137,29 @@ export class ShortcutManager {
    * キーイベントを処理
    */
   handleKeydown(e: KeyboardEvent): boolean {
-    const key = this.normalizeKey(e);
-    let handled = false;
-
     // Ctrl/Cmd + キーの組み合わせをチェック
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+      const key = this.normalizeKey(e);
       const comboKey = `${e.ctrlKey ? 'Ctrl' : 'Meta'}+${key}`;
       
-      for (const shortcut of this.shortcuts.values()) {
-        if (shortcut.keys.includes(comboKey)) {
-          e.preventDefault();
-          e.stopPropagation();
-          this.execute(shortcut.id);
-          handled = true;
-          break;
-        }
+      const shortcutIds = this.keyToShortcutMap.get(comboKey);
+      if (shortcutIds && shortcutIds.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        // 最初のショートカットを実行
+        this.execute(shortcutIds[0]);
+        return true;
       }
     }
 
-    return handled;
+    return false;
   }
 
   /**
    * キーを正規化
    */
   private normalizeKey(e: KeyboardEvent): string {
-    // 特殊キーのマッピング
-    const keyMap: Record<string, string> = {
-      ' ': 'Space',
-      'ArrowUp': 'Up',
-      'ArrowDown': 'Down',
-      'ArrowLeft': 'Left',
-      'ArrowRight': 'Right',
-      'Escape': 'Esc'
-    };
-
-    return keyMap[e.key] || e.key;
+    return KEY_MAP[e.key] || e.key;
   }
 
   /**
@@ -100,15 +172,39 @@ export class ShortcutManager {
   /**
    * カテゴリ別のショートカットを取得
    */
-  getShortcutsByCategory(category: ShortcutAction['category']): ShortcutAction[] {
+  getShortcutsByCategory(category: ShortcutCategory): ShortcutAction[] {
     return Array.from(this.shortcuts.values()).filter(s => s.category === category);
+  }
+
+  /**
+   * IDでショートカットを取得
+   */
+  getShortcutById(id: string): ShortcutAction | undefined {
+    return this.shortcuts.get(id);
+  }
+
+  /**
+   * キーでショートカットを取得
+   */
+  getShortcutsByKey(key: string): ShortcutAction[] {
+    const shortcutIds = this.keyToShortcutMap.get(key) || [];
+    return shortcutIds.map(id => this.shortcuts.get(id)).filter(Boolean) as ShortcutAction[];
   }
 
   /**
    * デフォルトショートカットを初期化
    */
   initializeDefaults(): void {
-    // ナビゲーション系
+    this.registerNavigationShortcuts();
+    this.registerSearchShortcuts();
+    this.registerUtilityShortcuts();
+    this.registerManagementShortcuts();
+  }
+
+  /**
+   * ナビゲーション系ショートカットを登録
+   */
+  private registerNavigationShortcuts = (): void => {
     this.register({
       id: 'focus_input',
       name: '入力フィールドにフォーカス',
@@ -138,8 +234,12 @@ export class ShortcutManager {
       },
       category: 'navigation'
     });
+  };
 
-    // 検索系
+  /**
+   * 検索系ショートカットを登録
+   */
+  private registerSearchShortcuts = (): void => {
     this.register({
       id: 'quick_search',
       name: 'クイック検索',
@@ -153,17 +253,21 @@ export class ShortcutManager {
             input.value = selection;
             input.focus();
             // 検索実行イベントをトリガー
-            input.dispatchEvent(new KeyboardEvent('keydown', { 
+            input.dispatchEvent(new KeyboardEvent('keydown', {
               key: 'Enter',
-              bubbles: true 
+              bubbles: true
             }));
           }
         }
       },
       category: 'search'
     });
+  };
 
-    // ユーティリティ系
+  /**
+   * ユーティリティ系ショートカットを登録
+   */
+  private registerUtilityShortcuts = (): void => {
     this.register({
       id: 'toggle_theme',
       name: 'テーマ切替',
@@ -197,7 +301,22 @@ export class ShortcutManager {
       category: 'utility'
     });
 
-    // 管理系
+    this.register({
+      id: 'reload_page',
+      name: 'ページ再読み込み',
+      description: '現在のページを再読み込み',
+      keys: ['F5', 'Ctrl+R', 'Meta+R'],
+      handler: () => {
+        location.reload();
+      },
+      category: 'utility'
+    });
+  };
+
+  /**
+   * 管理系ショートカットを登録
+   */
+  private registerManagementShortcuts = (): void => {
     this.register({
       id: 'open_manager',
       name: 'サイトマネージャー',
@@ -225,39 +344,17 @@ export class ShortcutManager {
       },
       category: 'management'
     });
-
-    this.register({
-      id: 'reload_page',
-      name: 'ページ再読み込み',
-      description: '現在のページを再読み込み',
-      keys: ['F5', 'Ctrl+R', 'Meta+R'],
-      handler: () => {
-        location.reload();
-      },
-      category: 'utility'
-    });
-  }
+  };
 
   /**
    * ショートカットの競合をチェック
    */
-  checkConflicts(): Array<{ shortcut: string; actions: string[] }> {
-    const conflicts: Array<{ shortcut: string; actions: string[] }> = [];
-    const keyMap = new Map<string, string[]>();
+  checkConflicts(): ShortcutConflict[] {
+    const conflicts: ShortcutConflict[] = [];
 
-    for (const shortcut of this.shortcuts.values()) {
-      for (const key of shortcut.keys) {
-        if (!keyMap.has(key)) {
-          keyMap.set(key, [shortcut.id]);
-        } else {
-          keyMap.get(key)!.push(shortcut.id);
-        }
-      }
-    }
-
-    for (const [key, actions] of keyMap.entries()) {
-      if (actions.length > 1) {
-        conflicts.push({ shortcut: key, actions });
+    for (const [key, shortcutIds] of this.keyToShortcutMap.entries()) {
+      if (shortcutIds.length > 1) {
+        conflicts.push({ shortcut: key, actions: [...shortcutIds] });
       }
     }
 
@@ -268,35 +365,76 @@ export class ShortcutManager {
    * ショートカットのヘルプテキストを生成
    */
   generateHelpText(): string {
-    const categories = {
-      navigation: '🧭 ナビゲーション',
-      search: '🔍 検索',
-      utility: '🛠️ ユーティリティ',
-      management: '⚙️ 管理'
-    };
+    let help = HELP_HEADER;
 
-    let help = '=== 利用可能なショートカット ===\n\n';
-
-    for (const [category, title] of Object.entries(categories)) {
-      const shortcuts = this.getShortcutsByCategory(category as ShortcutAction['category']);
+    // カテゴリ別にショートカットを表示
+    for (const [category, title] of Object.entries(CATEGORY_TITLES)) {
+      const shortcuts = this.getShortcutsByCategory(category as ShortcutCategory);
       if (shortcuts.length > 0) {
-        help += `${title}\n`;
-        shortcuts.forEach(shortcut => {
-          help += `  ${shortcut.keys.join(', ')} - ${shortcut.name}\n`;
-          help += `    ${shortcut.description}\n`;
-        });
-        help += '\n';
+        help += this.generateCategoryHelp(title, shortcuts);
       }
     }
 
+    // 競合するショートカットを表示
     const conflicts = this.checkConflicts();
     if (conflicts.length > 0) {
-      help += '⚠️  衝突しているショートカット:\n';
-      conflicts.forEach(conflict => {
-        help += `  ${conflict.shortcut}: ${conflict.actions.join(', ')}\n`;
-      });
+      help += this.generateConflictsHelp(conflicts);
     }
 
     return help;
+  }
+
+  /**
+   * カテゴリ別のヘルプテキストを生成
+   */
+  private generateCategoryHelp = (title: string, shortcuts: ShortcutAction[]): string => {
+    let categoryHelp = `${title}\n`;
+    shortcuts.forEach(shortcut => {
+      categoryHelp += `  ${shortcut.keys.join(', ')} - ${shortcut.name}\n`;
+      categoryHelp += `    ${shortcut.description}\n`;
+    });
+    categoryHelp += '\n';
+    return categoryHelp;
+  };
+
+  /**
+   * 競合するショートカットのヘルプテキストを生成
+   */
+  private generateConflictsHelp = (conflicts: ShortcutConflict[]): string => {
+    let conflictsHelp = CONFLICTS_HEADER;
+    conflicts.forEach(conflict => {
+      conflictsHelp += `  ${conflict.shortcut}: ${conflict.actions.join(', ')}\n`;
+    });
+    return conflictsHelp;
+  };
+
+  /**
+   * すべてのショートカットをクリア
+   */
+  clearAll(): void {
+    this.shortcuts.clear();
+    this.activeShortcuts.clear();
+    this.keyToShortcutMap.clear();
+  }
+
+  /**
+   * ショートカットの統計情報を取得
+   */
+  getStats(): { total: number; byCategory: Record<ShortcutCategory, number> } {
+    const byCategory: Record<ShortcutCategory, number> = {
+      navigation: 0,
+      search: 0,
+      utility: 0,
+      management: 0
+    };
+
+    for (const shortcut of this.shortcuts.values()) {
+      byCategory[shortcut.category]++;
+    }
+
+    return {
+      total: this.shortcuts.size,
+      byCategory
+    };
   }
 }

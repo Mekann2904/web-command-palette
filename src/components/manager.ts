@@ -8,6 +8,7 @@ import { addClickListener, addKeydownListener } from '@/utils/events';
 import { getManagerElements, getSiteRowInputs } from '@/utils/dom-helpers';
 import { setFocusTimeout, setUrlRevokeTimeout } from '@/utils/timing';
 import { GM_setValue } from '@/types/globals';
+import { validateInput, isValidUrl } from '@/utils/security';
 
 /**
  * サイトマネージャUIを管理するクラス
@@ -217,7 +218,11 @@ export class Manager {
     tr.querySelector('[data-del]')?.addEventListener('click', ()=> { tr.remove(); });
     tr.querySelector('[data-test]')?.addEventListener('click', ()=> {
       const u = urlInput?.value.trim();
-      if (u) window.open(u.includes('%s') ? u.replace(/%s/g, encodeURIComponent('test')) : u, '_blank');
+      if (u && isValidUrl(u)) {
+        window.open(u.includes('%s') ? u.replace(/%s/g, encodeURIComponent('test')) : u, '_blank');
+      } else if (u) {
+        showToast('無効なURLです');
+      }
     });
 
     this.dom.siteBodyEl.appendChild(tr);
@@ -248,13 +253,35 @@ export class Manager {
     const previousSites = getSites();
 
     const sites = Array.from(this.dom.siteBodyEl!.querySelectorAll('tr')).map((tr, index) => {
-      const name = (tr.querySelector('input[data-field="name"]') as HTMLInputElement)?.value.trim() || '';
-      const url = (tr.querySelector('input[data-field="url"]') as HTMLInputElement)?.value.trim() || '';
-      const tags = (tr.querySelector('input[data-field="tags"]') as HTMLInputElement)?.value.split(/[,\s]+/).map((t: string) => t.trim()).filter(Boolean) || [];
+      const nameInput = tr.querySelector('input[data-field="name"]') as HTMLInputElement;
+      const urlInput = tr.querySelector('input[data-field="url"]') as HTMLInputElement;
+      const tagsInput = tr.querySelector('input[data-field="tags"]') as HTMLInputElement;
+      
+      const name = nameInput?.value.trim() || '';
+      const url = urlInput?.value.trim() || '';
+      const tags = tagsInput?.value.split(/[,\s]+/).map((t: string) => t.trim()).filter(Boolean) || [];
+      
+      // 入力値の検証
       if (!name || !url) return null;
+      
+      // 名前の検証
+      if (!validateInput(name, 100)) { // 名前は最大100文字
+        console.warn('Invalid site name:', name);
+        return null;
+      }
+      
+      // URLの検証
+      if (!isValidUrl(url)) {
+        console.warn('Invalid site URL:', url);
+        return null;
+      }
+      
+      // タグの検証
+      const validTags = tags.filter(tag => validateInput(tag, 50)).slice(0, 10); // タグは最大10個、各50文字
+      
       const existing = tr.dataset.entryId && previousSites.find(s => s.id === tr.dataset.entryId);
       const id = existing ? existing.id : (tr.dataset.entryId || `site-${Math.random().toString(36).slice(2, 10)}`);
-      return { id, type: 'site' as const, name, url, tags };
+      return { id, type: 'site' as const, name, url, tags: validTags };
     }).filter(Boolean) as SiteEntry[];
 
     setSites(sites);
@@ -310,13 +337,55 @@ export class Manager {
       showToast('無効なJSONです');
       return;
     }
+    
+    // インポートするデータのサイズを制限（最大1MB）
+    if (jsonText.length > 1024 * 1024) {
+      showToast('ファイルサイズが大きすぎます');
+      return;
+    }
+    
     try {
       const arr = JSON.parse(jsonText);
       if (!Array.isArray(arr)) throw new Error('not array');
-      setSites(arr);
+      
+      // インポートデータの検証とフィルタリング
+      const validSites = arr.filter((site: any) => {
+        // 基本的な構造の検証
+        if (!site || typeof site !== 'object') return false;
+        if (site.type !== 'site') return false;
+        if (!site.name || typeof site.name !== 'string') return false;
+        if (!site.url || typeof site.url !== 'string') return false;
+        
+        // 入力値の検証
+        if (!validateInput(site.name, 100)) return false;
+        if (!isValidUrl(site.url)) return false;
+        
+        // タグの検証
+        if (site.tags) {
+          if (!Array.isArray(site.tags)) return false;
+          site.tags = site.tags.filter((tag: any) =>
+            typeof tag === 'string' && validateInput(tag, 50)
+          ).slice(0, 10);
+        } else {
+          site.tags = [];
+        }
+        
+        return true;
+      });
+      
+      if (validSites.length === 0) {
+        showToast('有効なサイトデータがありません');
+        return;
+      }
+      
+      if (validSites.length < arr.length) {
+        showToast(`${arr.length - validSites.length}件の無効なデータを除外しました`);
+      }
+      
+      setSites(validSites);
       pruneUsage(new Set(getSites().map(e => e.id)));
       this.renderManager();
-      showToast('読み込みました');
+      showToast(`${validSites.length}件のサイトを読み込みました`);
     } catch (err) {
       console.error('[CommandPalette] import parse error', err);
       showToast('無効なJSONです');

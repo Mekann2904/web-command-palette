@@ -9,6 +9,16 @@ declare const GM_xmlhttpRequest: (details: {
   onerror?: () => void;
 }) => void;
 
+// faviconキャッシュの設定
+const FAVICON_CACHE_CONFIG = {
+  MAX_SIZE: 500, // 最大キャッシュ数
+  MAX_AGE: 30 * 24 * 60 * 60 * 1000, // 30日（ミリ秒）
+  CLEANUP_INTERVAL: 7 * 24 * 60 * 60 * 1000 // 7日ごとにクリーンアップ
+};
+
+// 最後のクリーンアップ時刻
+let lastCleanupTime = 0;
+
 /**
  * favicon要素を作成する
  */
@@ -33,7 +43,7 @@ export const createFaviconEl = (entry: SiteEntry): HTMLElement => {
   }
 
   // グローバルからgetFavCacheを取得（循環参照を避けるため）
-  const getFavCache = (): Record<string, string> => {
+  const getFavCache = (): Record<string, { href: string; timestamp: number }> => {
     try {
       return (window as any).GM_getValue?.('vm_sites_palette__favcache_v1', {}) || {};
     } catch {
@@ -43,7 +53,16 @@ export const createFaviconEl = (entry: SiteEntry): HTMLElement => {
 
   const setFavCache = (origin: string, href: string): void => {
     const favCache = getFavCache();
-    favCache[origin] = href;
+    favCache[origin] = {
+      href,
+      timestamp: Date.now()
+    };
+    
+    // キャッシュサイズが制限を超えた場合はLRUで整理
+    if (Object.keys(favCache).length > FAVICON_CACHE_CONFIG.MAX_SIZE) {
+      pruneFavCache(favCache);
+    }
+    
     (window as any).GM_setValue?.('vm_sites_palette__favcache_v1', favCache);
   };
 
@@ -56,12 +75,59 @@ export const createFaviconEl = (entry: SiteEntry): HTMLElement => {
     }
   };
 
-  const cached = origin && getFavCache()[origin] ? getFavCache()[origin] : null;
+  /**
+   * faviconキャッシュを整理（LRUアルゴリズム）
+   */
+  const pruneFavCache = (cache: Record<string, { href: string; timestamp: number }>): void => {
+    const now = Date.now();
+    
+    // 期限切れのエントリを削除
+    for (const [origin, entry] of Object.entries(cache)) {
+      if (now - entry.timestamp > FAVICON_CACHE_CONFIG.MAX_AGE) {
+        delete cache[origin];
+      }
+    }
+    
+    // それでもサイズが大きい場合は古いものから削除
+    const entries = Object.entries(cache);
+    if (entries.length > FAVICON_CACHE_CONFIG.MAX_SIZE) {
+      // タイムスタンプでソートして古いものから削除
+      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
+      const toKeep = entries.slice(-FAVICON_CACHE_CONFIG.MAX_SIZE);
+      
+      // キャッシュをクリアして再構築
+      for (const origin of Object.keys(cache)) {
+        delete cache[origin];
+      }
+      
+      for (const [origin, entry] of toKeep) {
+        cache[origin] = entry;
+      }
+    }
+  };
+
+  /**
+   * 定期的なキャッシュクリーンアップ
+   */
+  const periodicCleanup = (): void => {
+    const now = Date.now();
+    if (now - lastCleanupTime > FAVICON_CACHE_CONFIG.CLEANUP_INTERVAL) {
+      const favCache = getFavCache();
+      pruneFavCache(favCache);
+      (window as any).GM_setValue?.('vm_sites_palette__favcache_v1', favCache);
+      lastCleanupTime = now;
+    }
+  };
+
+  // 定期的なクリーンアップを実行
+  periodicCleanup();
+  
+  const cached = origin && getFavCache()[origin] ? getFavCache()[origin].href : null;
   if (cached) {
     img.onload = () => wrap.appendChild(img);
-    img.onerror = () => { 
-      if (origin) clearFavCacheOrigin(origin); 
-      trySimple(); 
+    img.onerror = () => {
+      if (origin) clearFavCacheOrigin(origin);
+      trySimple();
     };
     img.src = cached;
     return wrap;

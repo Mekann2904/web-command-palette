@@ -1,9 +1,5 @@
 import { SiteEntry } from '@/types';
 
-// GM_* APIのグローバル宣言
-declare const GM_getValue: <T>(key: string, defaultValue?: T) => T;
-declare const GM_setValue: (key: string, value: any) => void;
-
 /**
  * トーストメッセージを表示する
  */

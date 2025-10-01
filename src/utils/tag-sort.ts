@@ -122,7 +122,7 @@ export interface TagSuggestion {
 /**
  * タグの使用回数をカウントする
  */
-export const countTagUsage = (entries: any[]): Record<string, number> => {
+export const countTagUsage = (entries: { tags?: string[] }[]): Record<string, number> => {
   const tagCounts: Record<string, number> = {};
   
   entries.forEach(entry => {
