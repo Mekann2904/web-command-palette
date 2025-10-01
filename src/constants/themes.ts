@@ -4,13 +4,13 @@ export const themes: Themes = {
   dark: {
     '--overlay-bg': 'rgba(0,0,0,0.35)',
     '--panel-bg': '#1f2937',
-    '--panel-text': '#e5e7eb',
+    '--panel-text': '#f9fafb', // #e5e7eb → #f9fafb (コントラスト向上)
     '--panel-shadow': '0 10px 40px rgba(0,0,0,.45)',
     '--input-bg': '#111827',
     '--input-text': '#f3f4f6',
     '--input-placeholder': '#9ca3af',
     '--border-color': '#374151',
-    '--muted': '#94a3b8',
+    '--muted': '#d1d5db', // #94a3b8 → #d1d5db (コントラスト向上)
     '--item-bg-alt': 'rgba(255,255,255,.02)',
     '--item-active': '#374151',
     '--hint-bg': '#111827',
@@ -18,12 +18,12 @@ export const themes: Themes = {
     '--list-scroll-track': 'rgba(255,255,255,0.08)',
     '--command-badge-bg': 'rgba(255,255,255,0.12)',
     '--tag-bg': 'rgba(79,70,229,0.2)',
-    '--tag-text': '#c7d2fe',
+    '--tag-text': '#e0e7ff', // #c7d2fe → #e0e7ff (コントラスト向上)
     '--tag-suggestion-bg': 'rgba(79,70,229,0.1)',
     '--autocomplete-bg': '#1f2937',
     '--autocomplete-border': '#374151',
     '--toast-bg': 'rgba(17,24,39,0.92)',
-    '--toast-text': '#e5e7eb'
+    '--toast-text': '#f9fafb' // #e5e7eb → #f9fafb (コントラスト向上)
   },
   light: {
     '--overlay-bg': 'rgba(255,255,255,0.65)',
@@ -34,7 +34,7 @@ export const themes: Themes = {
     '--input-text': '#111827',
     '--input-placeholder': '#6b7280',
     '--border-color': '#d1d5db',
-    '--muted': '#6b7280',
+    '--muted': '#4b5563', // #6b7280 → #4b5563 (コントラスト向上)
     '--item-bg-alt': 'rgba(17,24,39,0.03)',
     '--item-active': 'rgba(37,99,235,0.12)',
     '--hint-bg': '#edf2f7',
@@ -42,7 +42,7 @@ export const themes: Themes = {
     '--list-scroll-track': 'rgba(37,99,235,0.08)',
     '--command-badge-bg': 'rgba(37,99,235,0.15)',
     '--tag-bg': 'rgba(37,99,235,0.12)',
-    '--tag-text': '#1d4ed8',
+    '--tag-text': '#1e40af', // #1d4ed8 → #1e40af (コントラスト向上)
     '--tag-suggestion-bg': 'rgba(37,99,235,0.08)',
     '--autocomplete-bg': '#ffffff',
     '--autocomplete-border': '#d1d5db',
