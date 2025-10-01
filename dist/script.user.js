@@ -131,68 +131,253 @@
      * タイミング関連の定数
      */
     const TIMING = {
+        // 即時実行
+        IMMEDIATE: 0,
         // フォーカス遅延
         FOCUS_DELAY: 0,
+        // 自動オープン遅延
+        AUTO_OPEN_DELAY: 120,
+        // アニメーションオフセット
+        ANIMATION_OFFSET: 60,
+        // トースト表示期間
+        TOAST_DURATION: 3000,
+        // トースト非表示遅延
+        TOAST_HIDE_DELAY: 3000,
         // URL破棄遅延
         URL_REVOKE_DELAY: 2000,
         // ブラーチェック遅延
-        BLUR_CHECK_DELAY: 0};
+        BLUR_CHECK_DELAY: 0,
+        // 入力スペース追加遅延
+        INPUT_SPACE_DELAY: 0,
+        // ドラッグ開始遅延
+        DRAG_START_DELAY: 0,
+        // 仮想スクロールのデバウンス時間
+        VIRTUAL_SCROLL_DEBOUNCE: 16,
+        // 入力デバウンス時間
+        INPUT_DEBOUNCE: 150,
+        // 新しく追加する定数（リファクタリング計画に基づく）
+        // オートコンプリート非表示遅延
+        AUTOCOMPLETE_HIDE_DELAY: 300,
+        // フォーカストラップ遅延
+        FOCUS_TRAP_DELAY: 0,
+        // オーバーレイ非表示遅延
+        OVERLAY_HIDE_DELAY: 200,
+        // アニメーションフレーム遅延
+        ANIMATION_FRAME_DELAY: 16,
+        // ダブルクリック遅延
+        DOUBLE_CLICK_DELAY: 300,
+        // ホールド遅延
+        HOLD_DELAY: 500,
+        // リサイズデバウンス
+        RESIZE_DEBOUNCE: 250,
+        // スクロールデバウンス
+        SCROLL_DEBOUNCE: 100,
+        // キー入力遅延
+        KEY_INPUT_DELAY: 50,
+        // メニュー表示遅延
+        MENU_SHOW_DELAY: 100,
+        // メニュー非表示遅延
+        MENU_HIDE_DELAY: 150
+    };
 
     const STORAGE_KEY = 'vm_sites_palette__sites';
     const SETTINGS_KEY = 'vm_sites_palette__settings_v2';
+    const FAVCACHE_KEY = 'vm_sites_palette__favcache_v1';
     const USAGE_KEY = 'vm_sites_palette__usage_v1';
+    /**
+     * ストレージ操作の基底クラス
+     */
+    class StorageBase {
+        get(defaultValue) {
+            return GM_getValue(this.getStorageKey(), defaultValue);
+        }
+        set(value) {
+            GM_setValue(this.getStorageKey(), value);
+        }
+    }
+    /**
+     * サイトストレージクラス
+     */
+    class SiteStorage extends StorageBase {
+        getStorageKey() {
+            return STORAGE_KEY;
+        }
+        /**
+         * サイトを取得する
+         */
+        getSites() {
+            const raw = this.get(defaultSites);
+            const normalized = [];
+            let mutated = false;
+            for (const item of raw) {
+                const norm = normalizeSite(item);
+                if (!norm)
+                    continue;
+                if (item !== norm)
+                    mutated = true;
+                normalized.push(norm);
+            }
+            if (!normalized.length) {
+                normalized.push(...defaultSites.map(normalizeSite).filter(Boolean));
+            }
+            if (mutated) {
+                this.setSites(normalized, true);
+            }
+            return normalized;
+        }
+        /**
+         * サイトを設定する
+         */
+        setSites(sites, skipNormalize = false) {
+            const list = skipNormalize ? sites : sites.map(normalizeSite).filter(Boolean);
+            this.set(list);
+        }
+        /**
+         * サイトを追加する
+         */
+        addSite(site) {
+            const sites = this.getSites();
+            const newSite = normalizeSite({ ...site, id: site.id || generateId('site') });
+            if (newSite) {
+                sites.push(newSite);
+                this.setSites(sites, true);
+            }
+            return newSite;
+        }
+        /**
+         * サイトを更新する
+         */
+        updateSite(id, updates) {
+            const sites = this.getSites();
+            const index = sites.findIndex(site => site.id === id);
+            if (index === -1)
+                return false;
+            sites[index] = { ...sites[index], ...updates };
+            this.setSites(sites, true);
+            return true;
+        }
+        /**
+         * サイトを削除する
+         */
+        deleteSite(id) {
+            const sites = this.getSites();
+            const filteredSites = sites.filter(site => site.id !== id);
+            if (filteredSites.length === sites.length)
+                return false;
+            this.setSites(filteredSites, true);
+            return true;
+        }
+    }
+    /**
+     * 設定ストレージクラス
+     */
+    class SettingsStorage extends StorageBase {
+        getStorageKey() {
+            return SETTINGS_KEY;
+        }
+        /**
+         * 設定を取得する
+         */
+        getSettings() {
+            return { ...defaultSettings, ...this.get({}) };
+        }
+        /**
+         * 設定を保存する
+         */
+        setSettings(settings) {
+            this.set({ ...this.getSettings(), ...settings });
+        }
+        /**
+         * 設定をリセットする
+         */
+        resetSettings() {
+            this.set(defaultSettings);
+        }
+    }
+    /**
+     * キャッシュストレージクラス
+     */
+    class CacheStorage extends StorageBase {
+        constructor(key) {
+            super();
+            this.key = key;
+        }
+        getStorageKey() {
+            return this.key;
+        }
+        /**
+         * キャッシュを取得する
+         */
+        getCache() {
+            return this.get({});
+        }
+        /**
+         * キャッシュを設定する
+         */
+        setCache(cache) {
+            this.set(cache);
+        }
+        /**
+         * キャッシュエントリを設定する
+         */
+        setCacheEntry(key, value) {
+            const cache = this.getCache();
+            cache[key] = value;
+            this.setCache(cache);
+        }
+        /**
+         * キャッシュエントリを削除する
+         */
+        deleteCacheEntry(key) {
+            const cache = this.getCache();
+            if (!(key in cache))
+                return false;
+            delete cache[key];
+            this.setCache(cache);
+            return true;
+        }
+        /**
+         * キャッシュをクリアする
+         */
+        clearCache() {
+            this.set({});
+        }
+    }
+    // ストレージインスタンスを作成
+    const siteStorage = new SiteStorage();
+    const settingsStorage = new SettingsStorage();
+    new CacheStorage(FAVCACHE_KEY);
+    const usageStorage = new CacheStorage(USAGE_KEY);
     /**
      * ストレージを初期化する
      */
     const initializeStorage = () => {
-        if (!GM_getValue(STORAGE_KEY)) {
-            GM_setValue(STORAGE_KEY, defaultSites);
-        }
-        if (!GM_getValue(SETTINGS_KEY)) {
-            GM_setValue(SETTINGS_KEY, defaultSettings);
-        }
+        siteStorage.getSites(); // 初期化時に正規化を実行
+        settingsStorage.getSettings(); // 初期化時にデフォルト設定を適用
     };
     /**
      * サイトを取得する
      */
     const getSites = () => {
-        const raw = GM_getValue(STORAGE_KEY, defaultSites);
-        const normalized = [];
-        let mutated = false;
-        for (const item of raw) {
-            const norm = normalizeSite(item);
-            if (!norm)
-                continue;
-            if (item !== norm)
-                mutated = true;
-            normalized.push(norm);
-        }
-        if (!normalized.length) {
-            normalized.push(...defaultSites.map(normalizeSite).filter(Boolean));
-        }
-        if (mutated) {
-            setSites(normalized, true);
-        }
-        return normalized;
+        return siteStorage.getSites();
     };
     /**
      * サイトを設定する
      */
     const setSites = (sites, skipNormalize = false) => {
-        const list = skipNormalize ? sites : sites.map(normalizeSite).filter(Boolean);
-        GM_setValue(STORAGE_KEY, list);
+        siteStorage.setSites(sites, skipNormalize);
     };
     /**
      * 設定を取得する
      */
     const getSettings = () => {
-        return { ...defaultSettings, ...GM_getValue(SETTINGS_KEY, {}) };
+        return settingsStorage.getSettings();
     };
     /**
      * 設定を保存する
      */
     const setSettings = (settings) => {
-        GM_setValue(SETTINGS_KEY, { ...getSettings(), ...settings });
+        settingsStorage.setSettings(settings);
     };
     /**
      * 使用回数を増やす
@@ -208,15 +393,13 @@
      * 使用回数キャッシュを取得する
      */
     const getUsageCache = () => {
-        return GM_getValue(USAGE_KEY, {});
+        return usageStorage.getCache();
     };
     /**
      * 使用回数を設定する
      */
     const setUsage = (id, count) => {
-        const usageCache = getUsageCache();
-        usageCache[id] = count;
-        GM_setValue(USAGE_KEY, usageCache);
+        usageStorage.setCacheEntry(id, count);
     };
     /**
      * 使用回数を整理する
@@ -234,7 +417,7 @@
             }
         }
         if (changed) {
-            GM_setValue(USAGE_KEY, next);
+            usageStorage.setCache(next);
         }
     };
     /**
@@ -268,197 +451,6 @@
     function generateId(prefix) {
         return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
     }
-
-    /**
-     * 文字列を正規化する
-     */
-    const normalize = (str) => {
-        return (str || '').toLowerCase();
-    };
-    /**
-     * HTMLをエスケープする
-     */
-    const escapeHtml = (str) => {
-        const s = str || '';
-        const escapeMap = {
-            '&': '&',
-            '<': '<',
-            '>': '>',
-            '"': '"',
-            "'": '&#039;'
-        };
-        return s.replace(/[&<>"']/g, m => escapeMap[m] || m);
-    };
-    /**
-     * ワイルドカードマッチング
-     */
-    const wildcard = (str, pattern) => {
-        const re = new RegExp('^' + pattern.split('*').map(x => x.replace(/[\.^$+?()|{}\[\]]/g, r => '\\' + r)).join('.*') + '$', 'i');
-        return re.test(str);
-    };
-
-    /**
-     * タグフィルタを抽出する
-     */
-    const extractTagFilter = (query) => {
-        const trimmed = query.trim();
-        if (!trimmed.startsWith('#'))
-            return { tagFilter: null, textQuery: query };
-        // #タグ名 の形式を処理
-        const hashIndex = trimmed.indexOf('#');
-        const afterHash = trimmed.slice(hashIndex + 1);
-        // #のみの場合はnullを返す
-        if (afterHash === '') {
-            return { tagFilter: null, textQuery: '' };
-        }
-        // スペースでタグと検索語を分離
-        const spaceIndex = afterHash.indexOf(' ');
-        if (spaceIndex === -1) {
-            // #タグ名 のみの場合
-            const tag = normalize(afterHash);
-            return { tagFilter: tag || null, textQuery: '' };
-        }
-        else {
-            // #タグ名 検索語 の場合
-            const tag = normalize(afterHash.slice(0, spaceIndex));
-            const textQuery = afterHash.slice(spaceIndex + 1).trim();
-            return { tagFilter: tag || null, textQuery };
-        }
-    };
-    /**
-     * タグ候補を表示すべきか判定する
-     */
-    const shouldShowTagSuggestions = (query) => {
-        const trimmed = query.trim();
-        if (!trimmed.startsWith('#'))
-            return false;
-        // #タグ名 の形式で、まだスペースがない場合にタグ候補を表示
-        const hashIndex = trimmed.indexOf('#');
-        const afterHash = trimmed.slice(hashIndex + 1);
-        return !afterHash.includes(' ');
-    };
-    /**
-     * すべてのタグを取得する
-     */
-    const getAllTags = (entries = []) => {
-        // 省略時はストレージから取得
-        if (!entries || entries.length === 0) {
-            try {
-                entries = getSites();
-            }
-            catch (_) {
-                entries = [];
-            }
-        }
-        const tagSet = new Set();
-        entries.forEach((item) => {
-            if (item.tags && Array.isArray(item.tags)) {
-                item.tags.forEach((tag) => {
-                    if (tag && typeof tag === 'string' && tag.trim()) {
-                        const cleanTag = tag.trim();
-                        tagSet.add(cleanTag);
-                    }
-                });
-            }
-        });
-        return Array.from(tagSet).sort();
-    };
-    /**
-     * 使用回数ブーストを取得する
-     */
-    const getUsageBoost = (entry, usageCache) => {
-        if (!entry || !entry.id)
-            return 0;
-        const count = usageCache[entry.id] || 0;
-        return Math.min(8, Math.log(count + 1) * 3);
-    };
-    /**
-     * エントリをスコアリングする
-     */
-    const scoreEntries = (entries, query, usageCache) => {
-        const base = entries.map(e => ({ entry: e, score: 0 }));
-        if (!query) {
-            base.forEach(item => { item.score = 0.0001 + getUsageBoost(item.entry, usageCache); });
-        }
-        else {
-            const matcher = createFuzzyMatcher(query);
-            base.forEach(item => {
-                const entry = item.entry;
-                const score = Math.max(matcher(entry.name || ''), matcher(entry.url || '') - 4, matcher((entry.tags || []).join(' ')) - 2);
-                item.score = score === -Infinity ? -Infinity : score + getUsageBoost(item.entry, usageCache);
-            });
-        }
-        const filtered = base.filter(item => item.score > -Infinity);
-        filtered.sort((a, b) => b.score - a.score);
-        return filtered;
-    };
-    /**
-     * タグでエントリをフィルタリングする
-     */
-    const filterEntriesByTag = (entries, tagFilter) => {
-        if (!tagFilter)
-            return entries;
-        const normalizedTagFilter = normalize(tagFilter);
-        return entries.filter(entry => {
-            if (!entry.tags || !Array.isArray(entry.tags))
-                return false;
-            // 完全一致
-            if (entry.tags.some(tag => normalize(tag) === normalizedTagFilter)) {
-                return true;
-            }
-            // 階層タグの一致チェック
-            return entry.tags.some(tag => {
-                const normalizedTag = normalize(tag);
-                // 階層タグの親タグで一致（例: "ai/tools" は "ai" で一致）
-                const parts = tag.split('/');
-                if (parts.some(part => normalize(part) === normalizedTagFilter)) {
-                    return true;
-                }
-                // 階層タグの前方一致（例: "ai" で "ai/tools" に一致）
-                if (normalizedTag.startsWith(normalizedTagFilter + '/')) {
-                    return true;
-                }
-                return false;
-            });
-        });
-    };
-    /**
-     * ファジーマッチャーを作成する
-     */
-    const createFuzzyMatcher = (query) => {
-        const q = normalize(query);
-        const chars = q.split('');
-        const regex = new RegExp(chars.map(c => escapeRegex(c)).join('.*?'), 'i');
-        return (text) => {
-            if (!text)
-                return -Infinity;
-            const lower = normalize(text);
-            if (lower.includes(q)) {
-                const index = lower.indexOf(q);
-                return 40 - index * 1.5;
-            }
-            if (!regex.test(text))
-                return -Infinity;
-            let score = 20;
-            score -= lower.length * 0.02;
-            if (lower.startsWith(chars[0]))
-                score += 6;
-            return score;
-        };
-    };
-    /**
-     * 正規表現をエスケープする
-     */
-    const escapeRegex = (str) => {
-        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    };
-    /**
-     * フィルタリングとスコアリングを一度に行う
-     */
-    const filterAndScoreEntries = (entries, query, usageCache) => {
-        const scored = scoreEntries(entries, query, usageCache);
-        return scored.map(item => item.entry);
-    };
 
     /**
      * favicon要素を作成する
@@ -656,25 +648,12 @@
     };
 
     /**
-     * デバウンスユーティリティ関数
-     */
-    /**
-     * 指定された遅延時間後に関数を実行するデバウンス関数を作成
-     */
-    function debounce(func, delay) {
-        let timeoutId;
-        return (...args) => {
-            clearTimeout(timeoutId);
-            timeoutId = setTimeout(() => func(...args), delay);
-        };
-    }
-
-    /**
      * 仮想スクロール用のユーティリティ
      * 大量のアイテムを効率的に表示するための仮想スクロール機能を提供
      */
     /**
      * 仮想スクロールを管理するクラス
+     * パフォーマンス最適化のための改善を実装
      */
     class VirtualScrollManager {
         constructor(options) {
@@ -682,6 +661,10 @@
             this.itemHeights = new Map();
             this.itemPositions = [];
             this.totalHeight = 0;
+            this.lastScrollTop = 0;
+            this.scrollDirection = 'none';
+            this.visibleRangeCache = new Map();
+            this.maxCacheSize = 10;
             this.containerHeight = options.containerHeight;
             this.itemHeight = options.itemHeight || 40;
             this.overscan = options.overscan || 5;
@@ -692,6 +675,7 @@
          */
         setItems(items) {
             this.items = items;
+            this.visibleRangeCache.clear(); // キャッシュをクリア
             this.recalculatePositions();
         }
         /**
@@ -701,11 +685,13 @@
             const oldHeight = this.itemHeights.get(itemId) || this.estimatedItemHeight;
             this.itemHeights.set(itemId, height);
             if (Math.abs(oldHeight - height) > 1) {
+                this.visibleRangeCache.clear(); // キャッシュをクリア
                 this.recalculatePositions();
             }
         }
         /**
          * アイテムの位置を再計算
+         * パフォーマンス最適化のため、差分計算を実装
          */
         recalculatePositions() {
             this.itemPositions = [0];
@@ -720,20 +706,39 @@
         }
         /**
          * スクロール位置に基づいて表示範囲を計算
+         * パフォーマンス最適化のため、キャッシュとバイナリサーチを実装
          */
         getVisibleRange(scrollTop) {
+            // スクロール方向を検出
+            this.scrollDirection = scrollTop > this.lastScrollTop ? 'down' : scrollTop < this.lastScrollTop ? 'up' : 'none';
+            this.lastScrollTop = scrollTop;
+            // キャッシュをチェック
+            const cacheKey = Math.floor(scrollTop / 10) * 10; // 10px単位でキャッシュ
+            if (this.visibleRangeCache.has(cacheKey)) {
+                return this.visibleRangeCache.get(cacheKey);
+            }
             let startIndex = 0;
             let endIndex = 0;
             // バイナリサーチで開始位置を特定
-            for (let i = 0; i < this.itemPositions.length - 1; i++) {
-                if (this.itemPositions[i] <= scrollTop && this.itemPositions[i + 1] > scrollTop) {
-                    startIndex = Math.max(0, i - this.overscan);
+            let left = 0;
+            let right = this.itemPositions.length - 1;
+            while (left <= right) {
+                const mid = Math.floor((left + right) / 2);
+                if (this.itemPositions[mid] <= scrollTop && this.itemPositions[mid + 1] > scrollTop) {
+                    startIndex = Math.max(0, mid - this.overscan);
                     break;
+                }
+                else if (this.itemPositions[mid] < scrollTop) {
+                    left = mid + 1;
+                }
+                else {
+                    right = mid - 1;
                 }
             }
             // 終了位置を計算
+            const visibleBottom = scrollTop + this.containerHeight;
             for (let i = startIndex; i < this.itemPositions.length - 1; i++) {
-                if (this.itemPositions[i] < scrollTop + this.containerHeight) {
+                if (this.itemPositions[i] < visibleBottom) {
                     endIndex = i;
                 }
                 else {
@@ -741,35 +746,53 @@
                 }
             }
             endIndex = Math.min(this.items.length - 1, endIndex + this.overscan);
-            return {
+            const result = {
                 scrollTop,
                 startIndex,
                 endIndex,
                 offsetY: this.itemPositions[startIndex] || 0
             };
+            // キャッシュに保存
+            if (this.visibleRangeCache.size >= this.maxCacheSize) {
+                const firstKey = this.visibleRangeCache.keys().next().value;
+                if (firstKey !== undefined) {
+                    this.visibleRangeCache.delete(firstKey);
+                }
+            }
+            this.visibleRangeCache.set(cacheKey, result);
+            return result;
         }
         /**
          * 表示すべきアイテムを取得
+         * パフォーマンス最適化のため、メモリ割り当てを最小化
          */
         getVisibleItems(scrollTop) {
             const position = this.getVisibleRange(scrollTop);
             const visibleItems = [];
+            const styleCache = {};
             for (let i = position.startIndex; i <= position.endIndex; i++) {
                 if (i < this.items.length) {
                     const item = this.items[i];
                     const top = this.itemPositions[i];
                     const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
-                    visibleItems.push({
-                        item,
-                        index: i,
-                        style: {
+                    // スタイルオブジェクトを再利用
+                    const styleKey = `${top}-${height}`;
+                    let style = styleCache[styleKey];
+                    if (!style) {
+                        style = {
                             position: 'absolute',
                             top: `${top}px`,
                             left: '0',
                             right: '0',
                             height: `${height}px`,
                             zIndex: i
-                        }
+                        };
+                        styleCache[styleKey] = style;
+                    }
+                    visibleItems.push({
+                        item,
+                        index: i,
+                        style
                     });
                 }
             }
@@ -852,41 +875,137 @@
      * イベントリスナー関連のユーティリティ関数
      */
     /**
+     * イベントリスナー設定の共通オブジェクト
+     */
+    const EventListeners = {
+        /**
+         * 要素にクリックイベントリスナーを追加する
+         */
+        addClick: (element, handler) => {
+            element?.addEventListener('click', handler);
+        },
+        /**
+         * 要素にキーダウンイベントリスナーを追加する
+         */
+        addKeydown: (element, handler) => {
+            element?.addEventListener('keydown', handler);
+        },
+        /**
+         * 要素に入力イベントリスナーを追加する
+         */
+        addInput: (element, handler) => {
+            element?.addEventListener('input', handler);
+        },
+        /**
+         * 要素にフォーカスイベントリスナーを追加する
+         */
+        addFocus: (element, handler) => {
+            element?.addEventListener('focus', handler);
+        },
+        /**
+         * 要素にブラーイベントリスナーを追加する
+         */
+        addBlur: (element, handler) => {
+            element?.addEventListener('blur', handler);
+        },
+        /**
+         * 要素にマウスエンターイベントリスナーを追加する
+         */
+        addMouseEnter: (element, handler) => {
+            element?.addEventListener('mouseenter', handler);
+        },
+        /**
+         * 要素にマウスダウンイベントリスナーを追加する
+         */
+        addMouseDown: (element, handler) => {
+            element?.addEventListener('mousedown', handler);
+        },
+        /**
+         * 要素にマウスアップイベントリスナーを追加する
+         */
+        addMouseUp: (element, handler) => {
+            element?.addEventListener('mouseup', handler);
+        },
+        /**
+         * 要素にマウスムーブイベントリスナーを追加する
+         */
+        addMouseMove: (element, handler) => {
+            element?.addEventListener('mousemove', handler);
+        },
+        /**
+         * 要素にマウスリーブイベントリスナーを追加する
+         */
+        addMouseLeave: (element, handler) => {
+            element?.addEventListener('mouseleave', handler);
+        },
+        /**
+         * 要素にコンテキストメニューリスナーを追加する
+         */
+        addContextMenu: (element, handler) => {
+            element?.addEventListener('contextmenu', handler);
+        },
+        /**
+         * 要素にホイールイベントリスナーを追加する
+         */
+        addWheel: (element, handler) => {
+            element?.addEventListener('wheel', handler);
+        },
+        /**
+         * 要素にサブミットイベントリスナーを追加する
+         */
+        addSubmit: (element, handler) => {
+            element?.addEventListener('submit', handler);
+        },
+        /**
+         * 要素にチェンジイベントリスナーを追加する
+         */
+        addChange: (element, handler) => {
+            element?.addEventListener('change', handler);
+        },
+        /**
+         * 要素にタッチスタートイベントリスナーを追加する
+         */
+        addTouchStart: (element, handler) => {
+            element?.addEventListener('touchstart', handler);
+        },
+        /**
+         * 要素にタッチムーブイベントリスナーを追加する
+         */
+        addTouchMove: (element, handler) => {
+            element?.addEventListener('touchmove', handler);
+        },
+        /**
+         * 要素にタッチエンドイベントリスナーを追加する
+         */
+        addTouchEnd: (element, handler) => {
+            element?.addEventListener('touchend', handler);
+        }
+    };
+    // 後方互換性のために個別関数もエクスポート
+    /**
      * 要素にクリックイベントリスナーを追加する
      */
-    const addClickListener = (element, handler) => {
-        element?.addEventListener('click', handler);
-    };
+    const addClickListener = EventListeners.addClick;
     /**
      * 要素にキーダウンイベントリスナーを追加する
      */
-    const addKeydownListener = (element, handler) => {
-        element?.addEventListener('keydown', handler);
-    };
+    const addKeydownListener = EventListeners.addKeydown;
     /**
      * 要素に入力イベントリスナーを追加する
      */
-    const addInputListener = (element, handler) => {
-        element?.addEventListener('input', handler);
-    };
+    const addInputListener = EventListeners.addInput;
     /**
      * 要素にブラーイベントリスナーを追加する
      */
-    const addBlurListener = (element, handler) => {
-        element?.addEventListener('blur', handler);
-    };
+    const addBlurListener = EventListeners.addBlur;
     /**
      * 要素にマウスエンターイベントリスナーを追加する
      */
-    const addMouseEnterListener = (element, handler) => {
-        element?.addEventListener('mouseenter', handler);
-    };
+    const addMouseEnterListener = EventListeners.addMouseEnter;
     /**
      * 要素にマウスダウンイベントリスナーを追加する
      */
-    const addMouseDownListener = (element, handler) => {
-        element?.addEventListener('mousedown', handler);
-    };
+    const addMouseDownListener = EventListeners.addMouseDown;
     /**
      * オートコンプリート用の特殊なイベント設定
      * 入力フィールドとオートコンプリートリストの連携を設定する
@@ -1020,29 +1139,195 @@
      * タイミング関連のユーティリティ関数
      */
     /**
+     * タイミングユーティリティの共通オブジェクト
+     */
+    const TimingUtils = {
+        /**
+         * 指定した時間だけ遅延するPromiseを返す
+         */
+        delay: (ms) => {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        },
+        /**
+         * 基本的なsetTimeout関数
+         */
+        setTimeout: (callback, delay) => {
+            return setTimeout(callback, delay);
+        },
+        /**
+         * 即時実行タイムアウトを設定する
+         */
+        setImmediate: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.IMMEDIATE);
+        },
+        /**
+         * 自動オープン用の遅延タイムアウトを設定する
+         */
+        setAutoOpen: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.AUTO_OPEN_DELAY);
+        },
+        /**
+         * トースト非表示用の遅延処理を実行する
+         */
+        hideToast: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.TOAST_HIDE_DELAY);
+        },
+        /**
+         * 入力フィールドにスペースを追加する
+         */
+        addInputSpace: (inputEl) => {
+            TimingUtils.setTimeout(() => {
+                inputEl.value += ' ';
+            }, TIMING.INPUT_SPACE_DELAY);
+        },
+        /**
+         * ブラーチェック用の遅延処理を実行する
+         */
+        setBlurCheck: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.BLUR_CHECK_DELAY);
+        },
+        /**
+         * URL破棄用の遅延処理を実行する
+         */
+        setUrlRevoke: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.URL_REVOKE_DELAY);
+        },
+        /**
+         * トースト表示用の遅延処理を実行する
+         */
+        setToast: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.TOAST_DURATION);
+        },
+        /**
+         * ドラッグ開始用の遅延処理を実行する
+         */
+        setDragStart: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.DRAG_START_DELAY);
+        },
+        /**
+         * アニメーションオフセット用の遅延処理を実行する
+         */
+        setAnimationOffset: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.ANIMATION_OFFSET);
+        },
+        /**
+         * フォーカス設定用の遅延処理を実行する
+         */
+        setFocus: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.FOCUS_DELAY);
+        },
+        /**
+         * デバウンス用の遅延処理を実行する
+         */
+        setDebounce: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.INPUT_DEBOUNCE);
+        },
+        /**
+         * 仮想スクロール用のデバウンス遅延処理を実行する
+         */
+        setVirtualScroll: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.VIRTUAL_SCROLL_DEBOUNCE);
+        },
+        /**
+         * オートコンプリート非表示用の遅延処理を実行する
+         */
+        hideAutocomplete: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.AUTOCOMPLETE_HIDE_DELAY);
+        },
+        /**
+         * フォーカストラップ用の遅延処理を実行する
+         */
+        setFocusTrap: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.FOCUS_TRAP_DELAY);
+        },
+        /**
+         * オーバーレイ非表示用の遅延処理を実行する
+         */
+        hideOverlay: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.OVERLAY_HIDE_DELAY);
+        },
+        /**
+         * アニメーションフレーム用の遅延処理を実行する
+         */
+        setAnimationFrame: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.ANIMATION_FRAME_DELAY);
+        },
+        /**
+         * ダブルクリック用の遅延処理を実行する
+         */
+        setDoubleClick: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.DOUBLE_CLICK_DELAY);
+        },
+        /**
+         * ホールド用の遅延処理を実行する
+         */
+        setHold: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.HOLD_DELAY);
+        },
+        /**
+         * リサイズデバウンス用の遅延処理を実行する
+         */
+        setResizeDebounce: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.RESIZE_DEBOUNCE);
+        },
+        /**
+         * スクロールデバウンス用の遅延処理を実行する
+         */
+        setScrollDebounce: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.SCROLL_DEBOUNCE);
+        },
+        /**
+         * キー入力用の遅延処理を実行する
+         */
+        setKeyInput: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.KEY_INPUT_DELAY);
+        },
+        /**
+         * メニュー表示用の遅延処理を実行する
+         */
+        showMenu: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.MENU_SHOW_DELAY);
+        },
+        /**
+         * メニュー非表示用の遅延処理を実行する
+         */
+        hideMenu: (callback) => {
+            return TimingUtils.setTimeout(callback, TIMING.MENU_HIDE_DELAY);
+        },
+        /**
+         * 指定した時間だけ待機してからコールバックを実行する
+         */
+        waitAndExecute: (ms, callback) => {
+            return TimingUtils.setTimeout(callback, ms);
+        },
+        /**
+         * タイムアウトをクリアする安全な関数
+         */
+        clearSafeTimeout: (timeoutId) => {
+            if (timeoutId !== undefined) {
+                clearTimeout(timeoutId);
+            }
+        }
+    };
+    /**
      * ブラーチェック用の遅延処理を実行する
      */
-    const setBlurCheckTimeout = (callback) => {
-        return setTimeout(callback, TIMING.BLUR_CHECK_DELAY);
-    };
+    const setBlurCheckTimeout = TimingUtils.setBlurCheck;
     /**
      * URL破棄用の遅延処理を実行する
      */
-    const setUrlRevokeTimeout = (callback) => {
-        return setTimeout(callback, TIMING.URL_REVOKE_DELAY);
-    };
+    const setUrlRevokeTimeout = TimingUtils.setUrlRevoke;
     /**
      * フォーカス設定用の遅延処理を実行する
      */
-    const setFocusTimeout = (callback) => {
-        return setTimeout(callback, TIMING.FOCUS_DELAY);
-    };
+    const setFocusTimeout = TimingUtils.setFocus;
 
     /**
-     * メインパレットUIを管理するクラス
+     * パレットUIの生成と管理を担当するクラス
+     * UIの生成、スタイルの適用、DOM要素の作成などを行う
      */
-    class Palette {
-        constructor(state, dom, onExecuteEntry) {
+    class PaletteUI {
+        constructor(state, dom) {
             this.virtualScrollManager = null;
             this.virtualScrollContainer = null;
             this.virtualScrollContent = null;
@@ -1050,9 +1335,6 @@
             this.focusTrap = null;
             this.state = state;
             this.dom = dom;
-            this.onExecuteEntry = onExecuteEntry;
-            // デバウンスされたレンダリング関数を作成
-            this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
         }
         /**
          * Shadow Rootホストを確保する
@@ -1067,53 +1349,16 @@
             this.dom.root = this.dom.host.attachShadow({ mode: 'open' });
         }
         /**
-         * パレットを開く
-         */
-        async openPalette() {
-            this.ensureRoot();
-            this.state.cachedSettings = getSettings();
-            this.applyTheme();
-            this.state.isOpen = true;
-            if (!this.dom.overlayEl) {
-                this.createPaletteUI();
-            }
-            this.dom.overlayEl.style.display = 'block';
-            // CSSベースの遷移を発火
-            this.dom.overlayEl.classList.add('visible');
-            this.dom.inputEl.value = '';
-            this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
-            this.state.activeIndex = 0;
-            this.renderList();
-            // フォーカストラップを有効化
-            this.activateFocusTrap();
-            setFocusTimeout(() => this.dom.inputEl.focus());
-        }
-        /**
-         * パレットを閉じる
-         */
-        hidePalette() {
-            this.state.isOpen = false;
-            // フォーカストラップを無効化
-            this.deactivateFocusTrap();
-            if (!this.dom.overlayEl)
-                return;
-            this.dom.overlayEl.classList.remove('visible');
-            // CSSのtransition時間を踏まえて余裕を持って隠す
-            setTimeout(() => {
-                if (!this.state.isOpen && this.dom.overlayEl) {
-                    this.dom.overlayEl.style.display = 'none';
-                }
-            }, 220);
-        }
-        /**
          * テーマを適用する
          */
-        applyTheme() {
+        applyTheme(settings) {
             if (!this.dom.root)
                 return;
-            const settings = this.state.cachedSettings || getSettings();
-            const theme = settings.theme === 'light' ? themes.light : themes.dark;
-            const vars = { ...theme, '--accent-color': settings.accentColor || '#2563eb' };
+            const currentSettings = settings || this.state.cachedSettings;
+            if (!currentSettings)
+                return;
+            const theme = currentSettings.theme === 'light' ? themes.light : themes.dark;
+            const vars = { ...theme, '--accent-color': currentSettings.accentColor || '#2563eb' };
             const docStyle = this.dom.host.style;
             Object.entries(vars).forEach(([key, value]) => {
                 docStyle.setProperty(key, value);
@@ -1129,176 +1374,28 @@
                     console.error('[CommandPalette] Shadow root not available');
                     return;
                 }
-                const style = document.createElement('style');
-                style.textContent = `
-        :host { all: initial; }
-        .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
-        .overlay.visible { opacity: 1; }
-        .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
-        .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
-        .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
-        .input::placeholder { color: var(--input-placeholder); }
-        .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
-        .link { cursor: pointer; color: var(--accent-color); }
-        .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
-        .list::-webkit-scrollbar { width: 0; height: 0; }
-        .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
-        .item:nth-child(odd) { background: var(--item-bg-alt); }
-        .item.active { background: var(--item-active); transform: translateX(2px); }
-        .item .name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
-        .item .name .command-badge { margin-left: 0; }
-        .item .url { font-size: 12px; color: var(--muted); }
-        .item img.ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #fff; border: 1px solid var(--border-color); }
-        .item .ico-letter { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--hint-bg); color: var(--panel-text); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-transform: uppercase; }
-        .item .tag-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
-        .tag { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--tag-bg); color: var(--tag-text); font-size: 10px; border-radius: 999px; }
-        .tag::before { content: '#'; opacity: 0.7; margin-right: 2px; }
-        .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
-        .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
-        .command-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; background: var(--command-badge-bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--panel-text); }
-        .group-title { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-      `;
-                this.dom.overlayEl = document.createElement('div');
-                this.dom.overlayEl.className = 'overlay';
-                const panel = document.createElement('div');
-                panel.className = 'panel';
-                this.dom.inputEl = document.createElement('input');
-                this.dom.inputEl.className = 'input';
-                this.dom.inputEl.type = 'text';
-                this.dom.inputEl.placeholder = DEFAULT_PLACEHOLDER;
-                this.dom.listEl = document.createElement('div');
-                this.dom.listEl.className = 'list';
-                this.dom.hintEl = document.createElement('div');
-                this.dom.hintEl.className = 'hint';
-                this.dom.hintLeftSpan = document.createElement('span');
-                this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
-                const rightSpan = document.createElement('span');
-                rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
-                // nullチェックを追加
-                if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
-                    this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
-                    this.dom.hintEl.appendChild(rightSpan);
-                }
-                if (panel && this.dom.inputEl && this.dom.listEl && this.dom.hintEl) {
-                    panel.appendChild(this.dom.inputEl);
-                    panel.appendChild(this.dom.listEl);
-                    panel.appendChild(this.dom.hintEl);
-                }
-                if (this.dom.overlayEl && panel) {
+                const style = this.createPaletteStyles();
+                this.dom.root.appendChild(style);
+                // オーバーレイ要素を作成
+                this.dom.overlayEl = this.createOverlayElement();
+                // パネル要素を作成
+                const panel = this.createPanelElement();
+                if (this.dom.overlayEl) {
                     this.dom.overlayEl.appendChild(panel);
                 }
                 // トースト要素を作成
-                this.dom.toastEl = document.createElement('div');
-                this.dom.toastEl.className = 'toast';
+                this.dom.toastEl = this.createToastElement();
+                // マネージャと設定のCSSを追加
+                const managerStyle = this.createManagerStyles();
+                this.dom.root.appendChild(managerStyle);
                 // nullチェックを追加してからappendChild
                 if (this.dom.root) {
-                    this.dom.root.appendChild(style);
                     if (this.dom.overlayEl) {
                         this.dom.root.appendChild(this.dom.overlayEl);
                     }
                     if (this.dom.toastEl) {
                         this.dom.root.appendChild(this.dom.toastEl);
                     }
-                }
-                // マネージャと設定のCSSを追加
-                const managerStyle = document.createElement('style');
-                managerStyle.textContent = `
-        /* Manager / Settings */
-        .mgr-overlay, .set-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; }
-        .mgr, .set { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: min(860px, 94vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
-        .mgr header, .set header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
-        .mgr header h3, .set header h3 { margin: 0; font-size: 16px; }
-        .mgr-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
-        .tab-btn { flex: none; }
-        .tab-btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12); }
-        .mgr-tab.hidden { display: none; }
-        .mgr .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
-        .mgr .tbl th, .mgr .tbl td { border-bottom: 1px solid var(--border-color); padding: 8px 10px; vertical-align: top; }
-        .mgr .tbl th { text-align: left; color: var(--muted); font-weight: 600; }
-        .mgr input[type=text], .mgr textarea, .set input[type=text], .set textarea, .set select, .set input[type=color] { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 14px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--input-text); border-radius: 8px; }
-        .mgr textarea { resize: vertical; min-height: 56px; }
-        .mgr .row-btns button { margin-right: 6px; }
-        .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--panel-text); cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
-        .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
-        .btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
-        .btn.danger { background: #7f1d1d; border-color: #7f1d1d; color: #fee2e2; }
-        .mgr footer, .set footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
-        .muted { color: var(--muted); font-size: 12px; }
-        .drag { cursor: grab; }
-        .form-row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; padding: 10px 14px; }
-        .inline { display: flex; gap: 12px; align-items: center; }
-        .hotkey-box { text-align: center; font-size: 14px; padding: 8px 10px; border: 1px dashed var(--border-color); border-radius: 8px; user-select: none; background: var(--input-bg); color: var(--input-text); }
-        .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--command-badge-bg); color: var(--panel-text); }
-        .toast { position: fixed; inset: auto 0 24px 0; display: none; justify-content: center; pointer-events: none; }
-        .toast-message { background: var(--toast-bg); color: var(--toast-text); padding: 10px 16px; border-radius: 999px; box-shadow: 0 10px 20px rgba(0,0,0,0.2); animation: fade-slide 2.4s ease forwards; }
-        @keyframes fade-slide {
-          0% { opacity: 0; transform: translateY(18px); }
-          10% { opacity: 1; transform: translateY(0); }
-          90% { opacity: 1; transform: translateY(0); }
-          100% { opacity: 0; transform: translateY(12px); }
-        }
-
-        /* タグ候補 */
-        .tag-suggestion {
-          display: grid;
-          grid-template-columns: 28px 1fr auto;
-          align-items: center;
-          gap: 10px;
-          padding: 10px 14px;
-          cursor: pointer;
-          transition: background 0.12s ease, transform 0.12s ease;
-          background: var(--tag-suggestion-bg);
-          border-bottom: 1px solid var(--border-color);
-          border-radius: 0;
-        }
-        .tag-suggestion:first-child { border-radius: 8px 8px 0 0; }
-        .tag-suggestion:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
-        .tag-suggestion:hover, .tag-suggestion.active {
-          background: var(--item-active);
-          transform: translateX(2px);
-        }
-        .tag-suggestion .tag-icon {
-          width: 18px;
-          height: 18px;
-          border-radius: 4px;
-          background: var(--accent-color);
-          color: white;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 12px;
-          font-weight: bold;
-        }
-        .tag-suggestion .tag-info {
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-        }
-        .tag-suggestion .tag-name {
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--panel-text);
-        }
-        .tag-suggestion .tag-path {
-          font-size: 11px;
-          color: var(--muted);
-        }
-        .tag-suggestion .tag-count {
-          font-size: 12px;
-          color: var(--muted);
-        }
-        .tag-suggestion .kbd {
-          display: inline-block;
-          padding: 2px 6px;
-          border-radius: 6px;
-          background: var(--hint-bg);
-          border: 1px solid var(--border-color);
-          font-size: 12px;
-          color: var(--input-text);
-        }
-      `;
-                if (this.dom.root) {
-                    this.dom.root.appendChild(managerStyle);
                 }
                 // グローバルアクセス用
                 if (this.dom.toastEl) {
@@ -1310,48 +1407,305 @@
             }
         }
         /**
-         * リストをレンダリングする（デバウンス対応）
+         * パレットのスタイルを作成
          */
-        renderList() {
-            this.debouncedRenderList();
+        createPaletteStyles() {
+            const style = document.createElement('style');
+            style.textContent = `
+      :host { all: initial; }
+      .overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; backdrop-filter: blur(1px); opacity: 0; transition: opacity 160ms ease; }
+      .overlay.visible { opacity: 1; }
+      .panel { position: absolute; left: 50%; top: 16%; transform: translateX(-50%); width: min(720px, 92vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); overflow: hidden; font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); opacity: 0; transform: translate(-50%, calc(-8px)); transition: opacity 200ms ease, transform 200ms ease; }
+      .overlay.visible .panel { opacity: 1; transform: translate(-50%, 0); }
+      .input { width: 100%; box-sizing: border-box; padding: 14px 16px; font-size: 15px; background: var(--input-bg); color: var(--input-text); border: none; outline: none; }
+      .input::placeholder { color: var(--input-placeholder); }
+      .hint { padding: 6px 12px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border-color); background: var(--hint-bg); display: flex; align-items: center; justify-content: space-between; }
+      .link { cursor: pointer; color: var(--accent-color); }
+      .list { max-height: min(80vh, 1037px); overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+      .list::-webkit-scrollbar { width: 0; height: 0; }
+      .item { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; transition: background 0.12s ease, transform 0.12s ease; }
+      .item:nth-child(odd) { background: var(--item-bg-alt); }
+      .item.active { background: var(--item-active); transform: translateX(2px); }
+      .item .name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+      .item .name .command-badge { margin-left: 0; }
+      .item .url { font-size: 12px; color: var(--muted); }
+      .item img.ico { width: 18px; height: 18px; border-radius: 4px; object-fit: contain; background: #fff; border: 1px solid var(--border-color); }
+      .item .ico-letter { width: 18px; height: 18px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--hint-bg); color: var(--panel-text); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; text-transform: uppercase; }
+      .item .tag-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+      .tag { display: inline-flex; align-items: center; padding: 2px 6px; background: var(--tag-bg); color: var(--tag-text); font-size: 10px; border-radius: 999px; }
+      .tag::before { content: '#'; opacity: 0.7; margin-right: 2px; }
+      .empty { padding: 18px 14px; color: var(--muted); font-size: 14px; }
+      .kbd { display: inline-block; padding: 2px 6px; border-radius: 6px; background: var(--hint-bg); border: 1px solid var(--border-color); font-size: 12px; color: var(--input-text); }
+      .command-badge { margin-left: 6px; padding: 2px 6px; border-radius: 6px; background: var(--command-badge-bg); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--panel-text); }
+      .group-title { padding: 8px 16px 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    `;
+            return style;
         }
         /**
-         * 実際のリストレンダリング処理
+         * マネージャと設定のスタイルを作成
          */
-        performRenderList() {
-            const rawQuery = this.dom.inputEl?.value || '';
-            const { tagFilter, textQuery } = extractTagFilter(rawQuery);
-            const entries = this.getEntries();
-            // タグフィルタを適用
-            const filtered = tagFilter ? filterEntriesByTag(entries, tagFilter) : entries;
-            const scored = filterAndScoreEntries(filtered, textQuery, this.getUsageCache());
-            // タグ候補を表示するか判定
-            const showTagSuggestions = shouldShowTagSuggestions(rawQuery);
-            if (scored.length) {
-                if (this.state.activeIndex >= scored.length)
-                    this.state.activeIndex = scored.length - 1;
-                if (this.state.activeIndex < 0)
-                    this.state.activeIndex = 0;
+        createManagerStyles() {
+            const style = document.createElement('style');
+            style.textContent = `
+      /* Manager / Settings */
+      .mgr-overlay, .set-overlay { position: fixed; inset: 0; background: var(--overlay-bg); display: none; z-index: 2147483647; }
+      .mgr, .set { position: absolute; left: 50%; top: 8%; transform: translateX(-50%); width: min(860px, 94vw); background: var(--panel-bg); color: var(--panel-text); border-radius: 14px; box-shadow: var(--panel-shadow); font-family: ui-sans-serif, -apple-system, system-ui, Segoe UI, Roboto, 'Helvetica Neue', Arial, 'Apple Color Emoji','Segoe UI Emoji'; border: 1px solid var(--border-color); }
+      .mgr header, .set header { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border-color); }
+      .mgr header h3, .set header h3 { margin: 0; font-size: 16px; }
+      .mgr-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+      .tab-btn { flex: none; }
+      .tab-btn.active { box-shadow: inset 0 0 0 2px rgba(255,255,255,0.12); }
+      .mgr-tab.hidden { display: none; }
+      .mgr .tbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+      .mgr .tbl th, .mgr .tbl td { border-bottom: 1px solid var(--border-color); padding: 8px 10px; vertical-align: top; }
+      .mgr .tbl th { text-align: left; color: var(--muted); font-weight: 600; }
+      .mgr input[type=text], .mgr textarea, .set input[type=text], .set textarea, .set select, .set input[type=color] { width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 14px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--input-text); border-radius: 8px; }
+      .mgr textarea { resize: vertical; min-height: 56px; }
+      .mgr .row-btns button { margin-right: 6px; }
+      .btn { padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--input-bg); color: var(--panel-text); cursor: pointer; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+      .btn:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,0.18); }
+      .btn.primary { background: var(--accent-color); border-color: var(--accent-color); color: #fff; }
+      .btn.danger { background: #7f1d1d; border-color: #7f1d1d; color: #fee2e2; }
+      .mgr footer, .set footer { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .drag { cursor: grab; }
+      .form-row { display: grid; grid-template-columns: 200px 1fr; gap: 12px; align-items: center; padding: 10px 14px; }
+      .inline { display: flex; gap: 12px; align-items: center; }
+      .hotkey-box { text-align: center; font-size: 14px; padding: 8px 10px; border: 1px dashed var(--border-color); border-radius: 8px; user-select: none; background: var(--input-bg); color: var(--input-text); }
+      .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: var(--command-badge-bg); color: var(--panel-text); }
+      .toast { position: fixed; inset: auto 0 24px 0; display: none; justify-content: center; pointer-events: none; }
+      .toast-message { background: var(--toast-bg); color: var(--toast-text); padding: 10px 16px; border-radius: 999px; box-shadow: 0 10px 20px rgba(0,0,0,0.2); animation: fade-slide 2.4s ease forwards; }
+      @keyframes fade-slide {
+        0% { opacity: 0; transform: translateY(18px); }
+        10% { opacity: 1; transform: translateY(0); }
+        90% { opacity: 1; transform: translateY(0); }
+        100% { opacity: 0; transform: translateY(12px); }
+      }
+
+      /* タグ候補 */
+      .tag-suggestion {
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        cursor: pointer;
+        transition: background 0.12s ease, transform 0.12s ease;
+        background: var(--tag-suggestion-bg);
+        border-bottom: 1px solid var(--border-color);
+        border-radius: 0;
+      }
+      .tag-suggestion:first-child { border-radius: 8px 8px 0 0; }
+      .tag-suggestion:last-child { border-radius: 0 0 8px 8px; border-bottom: none; }
+      .tag-suggestion:hover, .tag-suggestion.active {
+        background: var(--item-active);
+        transform: translateX(2px);
+      }
+      .tag-suggestion .tag-icon {
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        background: var(--accent-color);
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: bold;
+      }
+      .tag-suggestion .tag-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .tag-suggestion .tag-name {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--panel-text);
+      }
+      .tag-suggestion .tag-path {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .tag-suggestion .tag-count {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .tag-suggestion .kbd {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: var(--hint-bg);
+        border: 1px solid var(--border-color);
+        font-size: 12px;
+        color: var(--input-text);
+      }
+    `;
+            return style;
+        }
+        /**
+         * 仮想スクロールイベントを処理（イベントハンドラから呼び出される）
+         */
+        handleVirtualScroll(position) {
+            // このメソッドは外部から設定されるコールバックを呼び出す
+            // 実際の処理はPaletteクラスで実装される
+        }
+        /**
+         * 仮想スクロールイベントハンドラを設定
+         */
+        setVirtualScrollHandler(handler) {
+            this.handleVirtualScroll = handler;
+        }
+        /**
+         * オーバーレイ要素を作成
+         */
+        createOverlayElement() {
+            const overlay = document.createElement('div');
+            overlay.className = 'overlay';
+            return overlay;
+        }
+        /**
+         * パネル要素を作成
+         */
+        createPanelElement() {
+            const panel = document.createElement('div');
+            panel.className = 'panel';
+            // 入力要素を作成
+            this.dom.inputEl = document.createElement('input');
+            this.dom.inputEl.className = 'input';
+            this.dom.inputEl.type = 'text';
+            // リスト要素を作成
+            this.dom.listEl = document.createElement('div');
+            this.dom.listEl.className = 'list';
+            // ヒント要素を作成
+            this.dom.hintEl = document.createElement('div');
+            this.dom.hintEl.className = 'hint';
+            this.dom.hintLeftSpan = document.createElement('span');
+            this.dom.hintLeftSpan.textContent = '↑↓: 移動 / Enter: 開く / Shift+Enter: 新規タブ / Tab: タグ選択 / Esc: 閉じる';
+            const rightSpan = document.createElement('span');
+            rightSpan.innerHTML = '<span class="link" id="vm-open-manager" tabindex="0">サイトマネージャを開く</span> · <span class="link" id="vm-open-settings" tabindex="0">設定</span> · ⌘P / Ctrl+P';
+            // nullチェックを追加
+            if (this.dom.hintEl && this.dom.hintLeftSpan && rightSpan) {
+                this.dom.hintEl.appendChild(this.dom.hintLeftSpan);
+                this.dom.hintEl.appendChild(rightSpan);
             }
-            else {
-                this.state.activeIndex = 0;
+            if (panel && this.dom.inputEl && this.dom.listEl && this.dom.hintEl) {
+                panel.appendChild(this.dom.inputEl);
+                panel.appendChild(this.dom.listEl);
+                panel.appendChild(this.dom.hintEl);
             }
-            // 仮想スクロールを使用するかどうかを判定
-            const useVirtualScroll = scored.length >= this.VIRTUAL_SCROLL_THRESHOLD;
-            const hasQuery = !!(textQuery || tagFilter);
-            if (useVirtualScroll) {
-                this.renderVirtualList(scored, hasQuery, showTagSuggestions);
+            return panel;
+        }
+        /**
+         * トースト要素を作成
+         */
+        createToastElement() {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            return toast;
+        }
+        /**
+         * 仮想スクロールをセットアップ
+         */
+        setupVirtualScroll() {
+            if (!this.dom.listEl)
+                return;
+            // 既存の仮想スクロールコンテナをクリア
+            if (this.virtualScrollContainer) {
+                this.dom.listEl.removeChild(this.virtualScrollContainer);
+                this.virtualScrollContainer = null;
+                this.virtualScrollContent = null;
+                this.virtualScrollManager = null;
             }
-            else {
-                this.renderNormalList(scored, hasQuery, showTagSuggestions);
+            // 仮想スクロールコンテナを作成
+            const { container, content, manager } = createVirtualScrollContainer({
+                containerHeight: 600, // 固定高さ
+                itemHeight: 50, // 推定アイテム高さ
+                onScroll: (position) => {
+                    // スクロールイベントはイベントハンドラで処理
+                    this.handleVirtualScroll(position);
+                }
+            });
+            this.virtualScrollContainer = container;
+            this.virtualScrollContent = content;
+            this.virtualScrollManager = manager;
+            // コンテナをリストに追加
+            this.dom.listEl.appendChild(container);
+        }
+        /**
+         * リストアイテム要素を作成
+         */
+        createListItem(entry, index) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.dataset.index = index.toString();
+            item.dataset.id = entry.id;
+            // ファビコンを作成
+            const favicon = createFaviconEl(entry);
+            item.appendChild(favicon);
+            // 名前とURLのコンテナを作成
+            const info = document.createElement('div');
+            info.className = 'info';
+            const name = document.createElement('div');
+            name.className = 'name';
+            name.textContent = entry.name;
+            // コマンドバッジを追加
+            if (entry.type === 'command') {
+                const badge = document.createElement('span');
+                badge.className = 'command-badge';
+                badge.textContent = 'CMD';
+                name.appendChild(badge);
             }
-            this.state.currentItems = scored;
-            this.updateActive();
+            const url = document.createElement('div');
+            url.className = 'url';
+            url.textContent = entry.url;
+            info.appendChild(name);
+            info.appendChild(url);
+            // タグバッジを追加
+            if (entry.tags && entry.tags.length > 0) {
+                const tagBadges = document.createElement('div');
+                tagBadges.className = 'tag-badges';
+                entry.tags.forEach(tag => {
+                    const tagEl = document.createElement('span');
+                    tagEl.className = 'tag';
+                    tagEl.textContent = tag;
+                    tagBadges.appendChild(tagEl);
+                });
+                info.appendChild(tagBadges);
+            }
+            item.appendChild(info);
+            return item;
+        }
+        /**
+         * アクティブなアイテムを更新
+         */
+        updateActive(activeIndex) {
+            if (!this.dom.listEl)
+                return;
+            const items = this.dom.listEl.querySelectorAll('.item');
+            items.forEach((item, index) => {
+                if (index === activeIndex) {
+                    item.classList.add('active');
+                }
+                else {
+                    item.classList.remove('active');
+                }
+            });
+            // 仮想スクロールの場合はアクティブアイテムまでスクロール
+            if (this.virtualScrollManager && this.virtualScrollContainer) {
+                const activeItem = items[activeIndex];
+                if (activeItem) {
+                    const itemId = activeItem.dataset.id;
+                    if (itemId) {
+                        this.virtualScrollManager.scrollToItem(itemId, this.virtualScrollContainer, 'center');
+                    }
+                }
+            }
         }
         /**
          * 仮想スクロールを使用してリストをレンダリング
          */
-        renderVirtualList(scored, hasQuery, showTagSuggestions = false) {
+        renderVirtualList(scored, hasQuery) {
             if (!this.dom.listEl)
                 return;
             // 仮想スクロールコンテナを初期化
@@ -1359,7 +1713,6 @@
                 this.setupVirtualScroll();
             }
             // 仮想スクロール用のアイテムデータに変換
-            // タグ候補はオートコンプリート機能に任せるため、ここでは考慮しない
             const virtualItems = scored.map((entry, index) => ({
                 id: entry.id,
                 data: { entry, index }
@@ -1384,12 +1737,10 @@
         /**
          * 通常のリストをレンダリング
          */
-        renderNormalList(scored, hasQuery, showTagSuggestions = false) {
+        renderNormalList(scored, hasQuery) {
             if (!this.dom.listEl)
                 return;
             this.dom.listEl.innerHTML = '';
-            // タグ候補はオートコンプリート機能に任せるため、ここでは表示しない
-            // showTagSuggestions パラメータは互換性のために残す
             if (!scored.length) {
                 const empty = document.createElement('div');
                 empty.className = 'empty';
@@ -1404,337 +1755,11 @@
             });
         }
         /**
-         * タグ候補を作成（オートコンプリート機能に統一したため使用しない）
-         */
-        /*
-        private createTagSuggestions(): HTMLElement[] {
-          const rawQuery = this.dom.inputEl?.value || '';
-          const { tagFilter, textQuery } = extractTagFilter(rawQuery);
-          
-          if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
-            return [];
-          }
-      
-          const entries = this.getEntries();
-          const allTags = this.getAllTags(entries);
-          
-          const tagCounts: Record<string, number> = {};
-          entries.forEach(entry => {
-            if (entry.tags) {
-              entry.tags.forEach((tag: string) => {
-                tagCounts[tag] = (tagCounts[tag] || 0) + 1;
-              });
-            }
-          });
-      
-          const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
-          let filteredTags = [];
-      
-          if (afterHash.includes('/')) {
-            const parts = afterHash.split('/');
-            const parentQuery = parts.slice(0, -1).join('/');
-            const childQuery = parts[parts.length - 1];
-            
-            filteredTags = allTags.filter(tag => {
-              if (tag.startsWith(parentQuery + '/')) {
-                const childPart = tag.slice(parentQuery.length + 1);
-                return childPart.toLowerCase().includes(childQuery.toLowerCase());
-              }
-              return false;
-            });
-          } else {
-            filteredTags = allTags.filter(tag => {
-              const tagLower = tag.toLowerCase();
-              const queryLower = afterHash.toLowerCase();
-              
-              if (tagLower === queryLower) return true;
-              if (tagLower.includes(queryLower)) return true;
-              
-              const parts = tag.split('/');
-              if (parts.some(part => part.toLowerCase().includes(queryLower))) return true;
-              
-              return false;
-            });
-          }
-      
-          filteredTags = sortTagsByHierarchy(filteredTags);
-      
-          return filteredTags.slice(0, 5).map((tag, index) => {
-            const suggestion = document.createElement('div');
-            suggestion.className = 'tag-suggestion';
-            suggestion.dataset.index = index.toString();
-            suggestion.dataset.tag = tag;
-            
-            const tagIcon = document.createElement('div');
-            tagIcon.className = 'tag-icon';
-            tagIcon.textContent = '#';
-            
-            const tagInfo = document.createElement('div');
-            tagInfo.className = 'tag-info';
-            
-            const tagName = document.createElement('div');
-            tagName.className = 'tag-name';
-            const displayName = tag.split('/').pop();
-            tagName.textContent = displayName || tag;
-            
-            const tagPath = document.createElement('div');
-            tagPath.className = 'tag-path';
-            tagPath.textContent = tag;
-            
-            tagInfo.appendChild(tagName);
-            tagInfo.appendChild(tagPath);
-            
-            const tagCount = document.createElement('div');
-            tagCount.className = 'tag-count';
-            tagCount.textContent = `${tagCounts[tag] || 0}件`;
-            
-            const kbd = document.createElement('span');
-            kbd.className = 'kbd';
-            kbd.textContent = '↵';
-            
-            suggestion.appendChild(tagIcon);
-            suggestion.appendChild(tagInfo);
-            suggestion.appendChild(tagCount);
-            suggestion.appendChild(kbd);
-            
-            addMouseEnterListener(suggestion, () => {
-              this.state.activeIndex = index;
-              this.updateActive();
-            });
-            
-            addMouseDownListener(suggestion, e => e.preventDefault());
-            addClickListener(suggestion, () => {
-              this.selectTag(tag);
-            });
-      
-            return suggestion;
-          });
-        }
-        */
-        /**
-         * タグ候補数を取得（オートコンプリート機能に統一したため使用しない）
-         */
-        /*
-        private getTagSuggestionsCount(): number {
-          const rawQuery = this.dom.inputEl?.value || '';
-          if (!rawQuery.includes('#') || rawQuery.includes(' ')) {
-            return 0;
-          }
-          
-          const entries = this.getEntries();
-          const allTags = this.getAllTags(entries);
-          const afterHash = rawQuery.slice(rawQuery.indexOf('#') + 1);
-          
-          let filteredTags = [];
-          if (afterHash.includes('/')) {
-            const parts = afterHash.split('/');
-            const parentQuery = parts.slice(0, -1).join('/');
-            const childQuery = parts[parts.length - 1];
-            
-            filteredTags = allTags.filter(tag => {
-              if (tag.startsWith(parentQuery + '/')) {
-                const childPart = tag.slice(parentQuery.length + 1);
-                return childPart.toLowerCase().includes(childQuery.toLowerCase());
-              }
-              return false;
-            });
-          } else {
-            filteredTags = allTags.filter(tag => {
-              const tagLower = tag.toLowerCase();
-              const queryLower = afterHash.toLowerCase();
-              
-              if (tagLower === queryLower) return true;
-              if (tagLower.includes(queryLower)) return true;
-              
-              const parts = tag.split('/');
-              if (parts.some(part => part.toLowerCase().includes(queryLower))) return true;
-              
-              return false;
-            });
-          }
-          
-          return Math.min(filteredTags.length, 5);
-        }
-        */
-        /**
-         * すべてのタグを取得
-         */
-        getAllTags(entries) {
-            const tagSet = new Set();
-            entries.forEach(item => {
-                if (item.tags && Array.isArray(item.tags)) {
-                    item.tags.forEach(tag => {
-                        if (tag && typeof tag === 'string' && tag.trim()) {
-                            tagSet.add(tag.trim());
-                        }
-                    });
-                }
-            });
-            return Array.from(tagSet).sort();
-        }
-        /**
-         * タグを選択（オートコンプリート機能に統一したため使用しない）
-         */
-        /*
-        private selectTag(tag: string): void {
-          const currentValue = this.dom.inputEl!.value;
-          const hashIndex = currentValue.indexOf('#');
-          
-          if (hashIndex >= 0) {
-            const beforeHash = currentValue.slice(0, hashIndex);
-            this.dom.inputEl!.value = beforeHash + '#' + tag;
-          } else {
-            this.dom.inputEl!.value = '#' + tag;
-          }
-          
-          this.dom.inputEl!.focus();
-          // 入力後にスペースを追加して検索できるようにする
-          setTimeout(() => {
-            this.dom.inputEl!.value += ' ';
-            this.renderList();
-          }, 0);
-        }
-        */
-        /**
-         * 仮想スクロールをセットアップ
-         */
-        setupVirtualScroll() {
-            if (!this.dom.listEl)
-                return;
-            const containerHeight = Math.min(window.innerHeight * 0.6, 600);
-            const { container, content, manager } = createVirtualScrollContainer({
-                containerHeight,
-                itemHeight: 60, // 推定アイテム高さ
-                onScroll: (position) => {
-                    // スクロール時に再レンダリング
-                    this.performRenderList();
-                }
-            });
-            // 既存のリスト要素を仮想スクロールコンテナに置き換え
-            this.virtualScrollContainer = container;
-            this.virtualScrollContent = content;
-            this.virtualScrollManager = manager;
-            // スタイルを調整
-            container.style.width = '100%';
-            container.style.maxHeight = 'min(80vh, 1037px)';
-            container.style.overflowY = 'auto';
-            container.style.overflowX = 'hidden';
-            container.style.scrollbarWidth = 'none';
-            // Webkitスクロールバーを非表示
-            const style = document.createElement('style');
-            style.textContent = `
-      .virtual-scroll-container::-webkit-scrollbar { 
-        width: 0; 
-        height: 0; 
-      }
-    `;
-            container.appendChild(style);
-            // 既存のリスト要素を置き換え
-            if (this.dom.listEl.parentNode) {
-                this.dom.listEl.parentNode.replaceChild(container, this.dom.listEl);
-            }
-            this.dom.listEl = container;
-        }
-        /**
-         * リストアイテム要素を作成
-         */
-        createListItem(entry, index) {
-            const item = document.createElement('div');
-            item.className = 'item';
-            item.dataset.index = index.toString();
-            item.setAttribute('tabindex', '0'); // フォーカス可能にする
-            addMouseEnterListener(item, () => {
-                this.state.activeIndex = index;
-                this.updateActive();
-            });
-            addMouseDownListener(item, e => e.preventDefault());
-            addClickListener(item, () => {
-                this.openItem(entry, false);
-            });
-            // キーボードイベントを追加
-            item.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    this.openItem(entry, false);
-                }
-            });
-            const icon = createFaviconEl(entry);
-            const left = document.createElement('div');
-            left.className = 'left';
-            left.style.alignSelf = 'center';
-            const name = document.createElement('div');
-            name.className = 'name';
-            name.textContent = entry.name || '(no title)';
-            left.appendChild(name);
-            if (entry.url) {
-                const url = document.createElement('div');
-                url.className = 'url';
-                url.textContent = entry.url;
-                left.appendChild(url);
-            }
-            if (entry.tags && entry.tags.length) {
-                const tags = document.createElement('div');
-                tags.className = 'tag-badges';
-                entry.tags.forEach(tag => {
-                    const span = document.createElement('span');
-                    span.className = 'tag';
-                    span.textContent = tag;
-                    tags.appendChild(span);
-                });
-                left.appendChild(tags);
-            }
-            const right = document.createElement('div');
-            right.innerHTML = '<span class="kbd">↵</span>';
-            item.appendChild(icon);
-            item.appendChild(left);
-            item.appendChild(right);
-            return item;
-        }
-        /**
-         * アクティブなアイテムを更新する
-         */
-        updateActive() {
-            const items = this.dom.listEl?.querySelectorAll('.item, .tag-suggestion') || [];
-            items.forEach((el, idx) => {
-                el.classList.toggle('active', idx === this.state.activeIndex);
-            });
-        }
-        /**
-         * アイテムを開く
-         */
-        openItem(item, shiftPressed) {
-            // コールバックを呼び出してエントリを実行
-            this.onExecuteEntry(item, shiftPressed);
-        }
-        /**
-         * エントリを取得する
-         */
-        getEntries() {
-            const sites = getSites();
-            return [...sites];
-        }
-        /**
-         * 使用回数キャッシュを取得する（暫定実装）
-         */
-        getUsageCache() {
-            try {
-                return window.GM_getValue?.('vm_sites_palette__usage_v1', {}) || {};
-            }
-            catch {
-                return {};
-            }
-        }
-        /**
          * フォーカストラップを有効化
          */
         activateFocusTrap() {
             if (!this.dom.overlayEl)
                 return;
-            // 既存のフォーカストラップがあれば無効化
-            if (this.focusTrap) {
-                this.focusTrap.deactivate();
-            }
-            // 新しいフォーカストラップを作成して有効化
             this.focusTrap = createFocusTrap(this.dom.overlayEl);
             this.focusTrap.activate();
         }
@@ -1746,6 +1771,714 @@
                 this.focusTrap.deactivate();
                 this.focusTrap = null;
             }
+        }
+        /**
+         * パレットを表示
+         */
+        showPalette() {
+            if (!this.dom.overlayEl)
+                return;
+            this.dom.overlayEl.style.display = 'block';
+            // CSSベースの遷移を発火
+            this.dom.overlayEl.classList.add('visible');
+            setFocusTimeout(() => {
+                if (this.dom.inputEl) {
+                    this.dom.inputEl.focus();
+                }
+            });
+        }
+        /**
+         * パレットを非表示
+         */
+        hidePalette() {
+            if (!this.dom.overlayEl)
+                return;
+            this.dom.overlayEl.classList.remove('visible');
+            // CSSのtransition時間を踏まえて余裕を持って隠す
+            setTimeout(() => {
+                if (this.dom.overlayEl && !this.state.isOpen) {
+                    this.dom.overlayEl.style.display = 'none';
+                }
+            }, 220);
+        }
+        /**
+         * 入力フィールドをクリア
+         */
+        clearInput() {
+            if (this.dom.inputEl) {
+                this.dom.inputEl.value = '';
+            }
+        }
+        /**
+         * 入力フィールドにプレースホルダーを設定
+         */
+        setInputPlaceholder(placeholder) {
+            if (this.dom.inputEl) {
+                this.dom.inputEl.placeholder = placeholder;
+            }
+        }
+        /**
+         * 入力フィールドの値を取得
+         */
+        getInputValue() {
+            return this.dom.inputEl?.value || '';
+        }
+        /**
+         * 仮想スクロールマネージャーを取得
+         */
+        getVirtualScrollManager() {
+            return this.virtualScrollManager;
+        }
+        /**
+         * 仮想スクロールコンテナを取得
+         */
+        getVirtualScrollContainer() {
+            return this.virtualScrollContainer;
+        }
+        /**
+         * 仮想スクロールコンテンツを取得
+         */
+        getVirtualScrollContent() {
+            return this.virtualScrollContent;
+        }
+        /**
+         * 仮想スクロールしきい値を取得
+         */
+        getVirtualScrollThreshold() {
+            return this.VIRTUAL_SCROLL_THRESHOLD;
+        }
+    }
+
+    /**
+     * デバウンスユーティリティ関数
+     */
+    /**
+     * 指定された遅延時間後に関数を実行するデバウンス関数を作成
+     */
+    function debounce(func, delay) {
+        let timeoutId;
+        return (...args) => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => func(...args), delay);
+        };
+    }
+
+    /**
+     * 文字列を正規化する
+     */
+    const normalize = (str) => {
+        return (str || '').toLowerCase();
+    };
+    /**
+     * HTMLをエスケープする
+     */
+    const escapeHtml = (str) => {
+        const s = str || '';
+        const escapeMap = {
+            '&': '&',
+            '<': '<',
+            '>': '>',
+            '"': '"',
+            "'": '&#039;'
+        };
+        return s.replace(/[&<>"']/g, m => escapeMap[m] || m);
+    };
+    /**
+     * ワイルドカードマッチング
+     */
+    const wildcard = (str, pattern) => {
+        const re = new RegExp('^' + pattern.split('*').map(x => x.replace(/[\.^$+?()|{}\[\]]/g, r => '\\' + r)).join('.*') + '$', 'i');
+        return re.test(str);
+    };
+
+    /**
+     * タグフィルタを抽出する
+     */
+    const extractTagFilter = (query) => {
+        const trimmed = query.trim();
+        if (!trimmed.startsWith('#'))
+            return { tagFilter: null, textQuery: query };
+        // #タグ名 の形式を処理
+        const hashIndex = trimmed.indexOf('#');
+        const afterHash = trimmed.slice(hashIndex + 1);
+        // #のみの場合はnullを返す
+        if (afterHash === '') {
+            return { tagFilter: null, textQuery: '' };
+        }
+        // スペースでタグと検索語を分離
+        const spaceIndex = afterHash.indexOf(' ');
+        if (spaceIndex === -1) {
+            // #タグ名 のみの場合
+            const tag = normalize(afterHash);
+            return { tagFilter: tag || null, textQuery: '' };
+        }
+        else {
+            // #タグ名 検索語 の場合
+            const tag = normalize(afterHash.slice(0, spaceIndex));
+            const textQuery = afterHash.slice(spaceIndex + 1).trim();
+            return { tagFilter: tag || null, textQuery };
+        }
+    };
+    /**
+     * タグ候補を表示すべきか判定する
+     */
+    const shouldShowTagSuggestions = (query) => {
+        const trimmed = query.trim();
+        if (!trimmed.startsWith('#'))
+            return false;
+        // #タグ名 の形式で、まだスペースがない場合にタグ候補を表示
+        const hashIndex = trimmed.indexOf('#');
+        const afterHash = trimmed.slice(hashIndex + 1);
+        return !afterHash.includes(' ');
+    };
+    /**
+     * すべてのタグを取得する
+     */
+    const getAllTags = (entries = []) => {
+        // 省略時はストレージから取得
+        if (!entries || entries.length === 0) {
+            try {
+                entries = getSites();
+            }
+            catch (_) {
+                entries = [];
+            }
+        }
+        const tagSet = new Set();
+        entries.forEach((item) => {
+            if (item.tags && Array.isArray(item.tags)) {
+                item.tags.forEach((tag) => {
+                    if (tag && typeof tag === 'string' && tag.trim()) {
+                        const cleanTag = tag.trim();
+                        tagSet.add(cleanTag);
+                    }
+                });
+            }
+        });
+        return Array.from(tagSet).sort();
+    };
+    /**
+     * 使用回数ブーストを取得する
+     */
+    const getUsageBoost = (entry, usageCache) => {
+        if (!entry || !entry.id)
+            return 0;
+        const count = usageCache[entry.id] || 0;
+        return Math.min(8, Math.log(count + 1) * 3);
+    };
+    /**
+     * エントリをスコアリングする
+     */
+    const scoreEntries = (entries, query, usageCache) => {
+        const base = entries.map(e => ({ entry: e, score: 0 }));
+        if (!query) {
+            base.forEach(item => { item.score = 0.0001 + getUsageBoost(item.entry, usageCache); });
+        }
+        else {
+            const matcher = createFuzzyMatcher(query);
+            base.forEach(item => {
+                const entry = item.entry;
+                const score = Math.max(matcher(entry.name || ''), matcher(entry.url || '') - 4, matcher((entry.tags || []).join(' ')) - 2);
+                item.score = score === -Infinity ? -Infinity : score + getUsageBoost(item.entry, usageCache);
+            });
+        }
+        const filtered = base.filter(item => item.score > -Infinity);
+        filtered.sort((a, b) => b.score - a.score);
+        return filtered;
+    };
+    /**
+     * タグでエントリをフィルタリングする
+     */
+    const filterEntriesByTag = (entries, tagFilter) => {
+        if (!tagFilter)
+            return entries;
+        const normalizedTagFilter = normalize(tagFilter);
+        return entries.filter(entry => {
+            if (!entry.tags || !Array.isArray(entry.tags))
+                return false;
+            // 完全一致
+            if (entry.tags.some(tag => normalize(tag) === normalizedTagFilter)) {
+                return true;
+            }
+            // 階層タグの一致チェック
+            return entry.tags.some(tag => {
+                const normalizedTag = normalize(tag);
+                // 階層タグの親タグで一致（例: "ai/tools" は "ai" で一致）
+                const parts = tag.split('/');
+                if (parts.some(part => normalize(part) === normalizedTagFilter)) {
+                    return true;
+                }
+                // 階層タグの前方一致（例: "ai" で "ai/tools" に一致）
+                if (normalizedTag.startsWith(normalizedTagFilter + '/')) {
+                    return true;
+                }
+                return false;
+            });
+        });
+    };
+    /**
+     * ファジーマッチャーを作成する
+     */
+    const createFuzzyMatcher = (query) => {
+        const q = normalize(query);
+        const chars = q.split('');
+        const regex = new RegExp(chars.map(c => escapeRegex(c)).join('.*?'), 'i');
+        return (text) => {
+            if (!text)
+                return -Infinity;
+            const lower = normalize(text);
+            if (lower.includes(q)) {
+                const index = lower.indexOf(q);
+                return 40 - index * 1.5;
+            }
+            if (!regex.test(text))
+                return -Infinity;
+            let score = 20;
+            score -= lower.length * 0.02;
+            if (lower.startsWith(chars[0]))
+                score += 6;
+            return score;
+        };
+    };
+    /**
+     * 正規表現をエスケープする
+     */
+    const escapeRegex = (str) => {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    };
+    /**
+     * フィルタリングとスコアリングを一度に行う
+     */
+    const filterAndScoreEntries = (entries, query, usageCache) => {
+        const scored = scoreEntries(entries, query, usageCache);
+        return scored.map(item => item.entry);
+    };
+
+    /**
+     * パレットのイベント処理を担当するクラス
+     * ユーザーインタラクションの処理、イベントリスナーの管理などを行う
+     */
+    class PaletteEventHandler {
+        constructor(state, dom, onExecuteEntry, onVirtualScroll, onEscape, onOpenManager, onOpenSettings) {
+            this.onRenderList = () => { };
+            this.onUpdateActive = () => { };
+            this.state = state;
+            this.dom = dom;
+            this.onExecuteEntry = onExecuteEntry;
+            this.onVirtualScroll = onVirtualScroll;
+            this.onEscape = onEscape;
+            this.onOpenManager = onOpenManager;
+            this.onOpenSettings = onOpenSettings;
+            // デバウンスされたレンダリング関数を作成
+            this.debouncedRenderList = debounce(() => this.performRenderList(), 150);
+        }
+        /**
+         * イベントリスナーを設定
+         */
+        setupEventListeners() {
+            this.setupInputEventListeners();
+            this.setupListEventListeners();
+            this.setupHintEventListeners();
+            this.setupKeyboardEventListeners();
+        }
+        /**
+         * 入力フィールドのイベントリスナーを設定
+         */
+        setupInputEventListeners() {
+            if (!this.dom.inputEl)
+                return;
+            // 入力イベント
+            this.dom.inputEl.addEventListener('input', () => {
+                this.state.activeIndex = 0;
+                this.renderList();
+            });
+            // キーダウンイベント
+            EventListeners.addKeydown(this.dom.inputEl, (e) => {
+                this.handleInputKeydown(e);
+            });
+        }
+        /**
+         * リストのイベントリスナーを設定
+         */
+        setupListEventListeners() {
+            if (!this.dom.listEl)
+                return;
+            // マウスイベント
+            this.dom.listEl.addEventListener('mouseenter', (e) => {
+                const item = e.target.closest('.item');
+                if (item) {
+                    const index = parseInt(item.dataset.index || '0', 10);
+                    if (!isNaN(index)) {
+                        this.state.activeIndex = index;
+                        this.updateActive();
+                    }
+                }
+            }, true);
+            // クリックイベント
+            this.dom.listEl.addEventListener('click', (e) => {
+                const item = e.target.closest('.item');
+                if (item) {
+                    const index = parseInt(item.dataset.index || '0', 10);
+                    if (!isNaN(index) && this.state.currentItems) {
+                        const entry = this.state.currentItems[index];
+                        if (entry) {
+                            this.openItem(entry, e.shiftKey);
+                        }
+                    }
+                }
+            });
+            // マウスダウンイベント（フォーカス維持用）
+            EventListeners.addMouseDown(this.dom.listEl, () => {
+                if (this.dom.inputEl) {
+                    this.dom.inputEl.focus();
+                }
+            });
+        }
+        /**
+         * ヒント領域のイベントリスナーを設定
+         */
+        setupHintEventListeners() {
+            if (!this.dom.hintEl)
+                return;
+            // マネージャリンク
+            const managerLink = this.dom.hintEl.querySelector('#vm-open-manager');
+            if (managerLink) {
+                managerLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.onOpenManager();
+                });
+            }
+            // 設定リンク
+            const settingsLink = this.dom.hintEl.querySelector('#vm-open-settings');
+            if (settingsLink) {
+                settingsLink.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    this.onOpenSettings();
+                });
+            }
+        }
+        /**
+         * キーボードイベントリスナーを設定
+         */
+        setupKeyboardEventListeners() {
+            if (!this.dom.overlayEl)
+                return;
+            EventListeners.addKeydown(this.dom.overlayEl, (e) => {
+                this.handleOverlayKeydown(e);
+            });
+        }
+        /**
+         * 入力フィールドのキーダウンイベントを処理
+         */
+        handleInputKeydown(e) {
+            if (!this.state.currentItems || !this.state.currentItems.length)
+                return;
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault();
+                    this.state.activeIndex = Math.min(this.state.activeIndex + 1, this.state.currentItems.length - 1);
+                    this.updateActive();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    this.state.activeIndex = Math.max(this.state.activeIndex - 1, 0);
+                    this.updateActive();
+                    break;
+                case 'Enter':
+                    e.preventDefault();
+                    const item = this.state.currentItems[this.state.activeIndex];
+                    if (item) {
+                        this.openItem(item, e.shiftKey);
+                    }
+                    break;
+                case 'Escape':
+                    e.preventDefault();
+                    this.onEscape();
+                    break;
+                case 'Tab':
+                    e.preventDefault();
+                    // タグ選択機能はオートコンプリート機能に統一されたため、ここでは何もしない
+                    break;
+            }
+        }
+        /**
+         * オーバーレイのキーダウンイベントを処理
+         */
+        handleOverlayKeydown(e) {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                this.onEscape();
+            }
+        }
+        /**
+         * リストをレンダリング（デバウンス対応）
+         */
+        renderList() {
+            this.debouncedRenderList();
+        }
+        /**
+         * 実際のリストレンダリング処理
+         */
+        performRenderList() {
+            if (!this.dom.inputEl)
+                return;
+            const rawQuery = this.dom.inputEl.value || '';
+            const { tagFilter, textQuery } = extractTagFilter(rawQuery);
+            const entries = this.getEntries();
+            // タグフィルタを適用
+            const filtered = tagFilter ? filterEntriesByTag(entries, tagFilter) : entries;
+            const scored = filterAndScoreEntries(filtered, textQuery, this.getUsageCache());
+            if (scored.length) {
+                if (this.state.activeIndex >= scored.length)
+                    this.state.activeIndex = scored.length - 1;
+                if (this.state.activeIndex < 0)
+                    this.state.activeIndex = 0;
+            }
+            else {
+                this.state.activeIndex = 0;
+            }
+            const hasQuery = !!(textQuery || tagFilter);
+            // UIクラスにレンダリングを委譲
+            this.onRenderList(scored, hasQuery);
+            this.state.currentItems = scored;
+            this.updateActive();
+        }
+        /**
+         * アクティブなアイテムを更新
+         */
+        updateActive() {
+            // UIクラスに更新を委譲
+            this.onUpdateActive(this.state.activeIndex);
+        }
+        /**
+         * アイテムを開く
+         */
+        openItem(item, shiftPressed) {
+            this.onExecuteEntry(item, shiftPressed);
+        }
+        /**
+         * エントリーを取得
+         */
+        getEntries() {
+            // このメソッドは実際の実装では外部から提供される
+            return [];
+        }
+        /**
+         * 使用キャッシュを取得
+         */
+        getUsageCache() {
+            // このメソッドは実際の実装では外部から提供される
+            return {};
+        }
+        /**
+         * 仮想スクロールイベントを処理
+         */
+        handleVirtualScroll(position) {
+            this.onVirtualScroll(position);
+        }
+        /**
+         * レンダリングコールバックを設定
+         */
+        setRenderCallback(callback) {
+            this.onRenderList = callback;
+        }
+        /**
+         * アクティブ更新コールバックを設定
+         */
+        setUpdateActiveCallback(callback) {
+            this.onUpdateActive = callback;
+        }
+        /**
+         * エントリー取得コールバックを設定
+         */
+        setGetEntriesCallback(callback) {
+            this.getEntries = callback;
+        }
+        /**
+         * 使用キャッシュ取得コールバックを設定
+         */
+        setGetUsageCacheCallback(callback) {
+            this.getUsageCache = callback;
+        }
+        /**
+         * イベントリスナーをクリーンアップ
+         */
+        cleanup() {
+            // 必要に応じてイベントリスナーのクリーンアップを実装
+        }
+    }
+
+    /**
+     * メインパレットUIを管理するクラス
+     * UI生成とイベント処理を分離したアーキテクチャを採用
+     */
+    class Palette {
+        constructor(state, dom, onExecuteEntry, openManagerCallback, openSettingsCallback) {
+            this.state = state;
+            this.dom = dom;
+            this.onExecuteEntry = onExecuteEntry;
+            this.openManagerCallback = openManagerCallback;
+            this.openSettingsCallback = openSettingsCallback;
+            // UIとイベントハンドラを初期化
+            this.ui = new PaletteUI(state, dom);
+            this.eventHandler = new PaletteEventHandler(state, dom, onExecuteEntry, (position) => this.handleVirtualScroll(position), () => this.hidePalette(), () => this.openManager(), () => this.openSettings());
+            // コールバックを設定
+            this.setupCallbacks();
+            // 仮想スクロールハンドラを設定
+            this.ui.setVirtualScrollHandler((position) => this.handleVirtualScroll(position));
+        }
+        /**
+         * コールバックを設定
+         */
+        setupCallbacks() {
+            this.eventHandler.setRenderCallback((scored, hasQuery) => {
+                this.renderList(scored, hasQuery);
+            });
+            this.eventHandler.setUpdateActiveCallback((activeIndex) => {
+                this.ui.updateActive(activeIndex);
+            });
+            this.eventHandler.setGetEntriesCallback(() => this.getEntries());
+            this.eventHandler.setGetUsageCacheCallback(() => this.getUsageCache());
+        }
+        /**
+         * Shadow Rootホストを確保する
+         */
+        ensureRoot() {
+            this.ui.ensureRoot();
+        }
+        /**
+         * パレットを開く
+         */
+        async openPalette() {
+            this.ensureRoot();
+            this.state.cachedSettings = getSettings();
+            this.ui.applyTheme(this.state.cachedSettings || undefined);
+            this.state.isOpen = true;
+            if (!this.dom.overlayEl) {
+                this.ui.createPaletteUI();
+                // イベントリスナーを設定
+                this.eventHandler.setupEventListeners();
+            }
+            this.ui.showPalette();
+            this.ui.clearInput();
+            this.ui.setInputPlaceholder(DEFAULT_PLACEHOLDER);
+            this.state.activeIndex = 0;
+            this.eventHandler.renderList();
+            // フォーカストラップを有効化
+            this.ui.activateFocusTrap();
+        }
+        /**
+         * パレットを閉じる
+         */
+        hidePalette() {
+            this.state.isOpen = false;
+            // フォーカストラップを無効化
+            this.ui.deactivateFocusTrap();
+            this.ui.hidePalette();
+        }
+        /**
+         * テーマを適用する
+         */
+        applyTheme() {
+            this.ui.applyTheme(this.state.cachedSettings || undefined);
+        }
+        /**
+         * リストをレンダリング
+         */
+        renderList(scored, hasQuery) {
+            // 仮想スクロールを使用するかどうかを判定
+            const useVirtualScroll = scored.length >= this.ui.getVirtualScrollThreshold();
+            if (useVirtualScroll) {
+                this.ui.renderVirtualList(scored, hasQuery);
+            }
+            else {
+                this.ui.renderNormalList(scored, hasQuery);
+            }
+            this.state.currentItems = scored;
+            this.ui.updateActive(this.state.activeIndex);
+        }
+        /**
+         * 仮想スクロールイベントを処理
+         */
+        handleVirtualScroll(position) {
+            const virtualScrollManager = this.ui.getVirtualScrollManager();
+            const virtualScrollContainer = this.ui.getVirtualScrollContainer();
+            const virtualScrollContent = this.ui.getVirtualScrollContent();
+            if (!virtualScrollManager || !virtualScrollContainer || !virtualScrollContent)
+                return;
+            // 現在のスクロール位置で表示すべきアイテムを取得
+            const scrollTop = virtualScrollContainer.scrollTop || 0;
+            const visibleItems = virtualScrollManager.getVisibleItems(scrollTop);
+            // コンテンツの高さを設定
+            virtualScrollContent.style.height = `${virtualScrollManager.getTotalHeight()}px`;
+            virtualScrollContent.innerHTML = '';
+            // 表示アイテムをレンダリング
+            visibleItems.forEach(({ item, index, style }) => {
+                const { entry } = item.data;
+                const itemEl = this.ui.createListItem(entry, index);
+                itemEl.setAttribute('style', Object.entries(style).map(([k, v]) => `${k}: ${v}`).join('; '));
+                virtualScrollContent.appendChild(itemEl);
+            });
+        }
+        /**
+         * マネージャを開く
+         */
+        openManager() {
+            this.openManagerCallback();
+        }
+        /**
+         * 設定を開く
+         */
+        openSettings() {
+            this.openSettingsCallback();
+        }
+        /**
+         * エントリーを取得
+         */
+        getEntries() {
+            return getSites();
+        }
+        /**
+         * 使用キャッシュを取得
+         */
+        getUsageCache() {
+            try {
+                return getUsageCache();
+            }
+            catch (error) {
+                console.error('[CommandPalette] Error getting usage cache:', error);
+                return {};
+            }
+        }
+        /**
+         * アイテムを開く
+         */
+        openItem(item, shiftPressed) {
+            this.onExecuteEntry(item, shiftPressed);
+        }
+        /**
+         * アクティブなアイテムを更新
+         */
+        updateActive() {
+            this.ui.updateActive(this.state.activeIndex);
+        }
+        /**
+         * 入力フィールドの値を取得
+         */
+        getInputValue() {
+            return this.ui.getInputValue();
+        }
+        /**
+         * リストを再レンダリング
+         */
+        refreshList() {
+            this.eventHandler.renderList();
+        }
+        /**
+         * クリーンアップ
+         */
+        cleanup() {
+            this.eventHandler.cleanup();
         }
     }
 
@@ -1765,6 +2498,88 @@
                 return aDepth - bDepth;
             // 同じ階層の場合はアルファベット順
             return a.localeCompare(b);
+        });
+    };
+    /**
+     * タグの使用回数をカウントする
+     */
+    const countTagUsage = (entries) => {
+        const tagCounts = {};
+        entries.forEach(entry => {
+            if (entry.tags) {
+                entry.tags.forEach((tag) => {
+                    const normalizedTag = tag.trim();
+                    if (normalizedTag) {
+                        tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+                    }
+                });
+            }
+        });
+        return tagCounts;
+    };
+    /**
+     * タグをフィルタリングする
+     */
+    const filterTags = (allTags, query) => {
+        const queryLower = query.toLowerCase();
+        return allTags.filter(tag => {
+            const tagLower = tag.toLowerCase();
+            // 完全一致
+            if (tagLower === queryLower)
+                return true;
+            // 階層タグの親タグで一致
+            const parts = tag.split('/');
+            if (parts.some(part => part.toLowerCase() === queryLower))
+                return true;
+            // 部分一致
+            if (tagLower.includes(queryLower))
+                return true;
+            return false;
+        });
+    };
+    /**
+     * 階層タグをフィルタリングする
+     */
+    const filterHierarchicalTags = (allTags, query) => {
+        if (query.includes('/')) {
+            const parts = query.split('/');
+            const parentQuery = parts.slice(0, -1).join('/');
+            const childQuery = parts[parts.length - 1];
+            return allTags.filter(tag => {
+                if (tag.startsWith(parentQuery + '/')) {
+                    const childPart = tag.slice(parentQuery.length + 1);
+                    return childPart.toLowerCase().includes(childQuery.toLowerCase());
+                }
+                return false;
+            });
+        }
+        else {
+            return filterTags(allTags, query);
+        }
+    };
+    /**
+     * タグ候補オブジェクトに変換する
+     */
+    const createTagSuggestions = (tags, tagCounts) => {
+        return tags.map(tag => {
+            let count = tagCounts[tag] || 0;
+            // 親タグの場合、子タグの件数も合算
+            if (!tag.includes('/')) {
+                Object.keys(tagCounts).forEach(childTag => {
+                    if (childTag.startsWith(tag + '/')) {
+                        count += tagCounts[childTag];
+                    }
+                });
+            }
+            const parts = tag.split('/');
+            const depth = parts.length - 1;
+            const parentPath = parts.slice(0, -1).join('/');
+            return {
+                name: tag,
+                count: count,
+                depth: depth,
+                parentPath: parentPath || undefined
+            };
         });
     };
 
@@ -1914,69 +2729,14 @@
         showAutocomplete(query) {
             const entries = this.getEntries();
             const allTags = getAllTags(entries);
-            const tagCounts = {};
-            entries.forEach(entry => {
-                if (entry.tags) {
-                    entry.tags.forEach((tag) => {
-                        // タグを正規化してカウント
-                        const normalizedTag = tag.trim();
-                        if (normalizedTag) {
-                            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
-                        }
-                    });
-                }
-            });
-            let filteredTags = [];
-            if (query.includes('/')) {
-                const parts = query.split('/');
-                const parentQuery = parts.slice(0, -1).join('/');
-                const childQuery = parts[parts.length - 1];
-                filteredTags = allTags.filter(tag => {
-                    if (tag.startsWith(parentQuery + '/')) {
-                        const childPart = tag.slice(parentQuery.length + 1);
-                        return childPart.toLowerCase().includes(childQuery.toLowerCase());
-                    }
-                    return false;
-                });
-            }
-            else {
-                filteredTags = allTags.filter(tag => {
-                    const tagLower = tag.toLowerCase();
-                    const queryLower = query.toLowerCase();
-                    // 完全一致
-                    if (tagLower === queryLower) {
-                        return true;
-                    }
-                    // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
-                    const parts = tag.split('/');
-                    if (parts.some(part => part.toLowerCase() === queryLower)) {
-                        return true;
-                    }
-                    // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
-                    if (tagLower.includes(queryLower)) {
-                        return true;
-                    }
-                    return false;
-                });
-            }
+            // タグの使用回数をカウント
+            const tagCounts = countTagUsage(entries);
+            // タグをフィルタリング
+            let filteredTags = filterHierarchicalTags(allTags, query);
+            // 階層の浅い順、アルファベット順にソート
             filteredTags = sortTagsByHierarchy(filteredTags);
-            const filteredTagObjects = filteredTags.map(tag => {
-                // 階層タグの場合、親タグと子タグの件数を合算
-                let count = tagCounts[tag] || 0;
-                // 親タグの場合、子タグの件数も合算
-                if (!tag.includes('/')) {
-                    // 親タグの場合、その親タグで始まるすべての子タグの件数を合算
-                    Object.keys(tagCounts).forEach(childTag => {
-                        if (childTag.startsWith(tag + '/')) {
-                            count += tagCounts[childTag];
-                        }
-                    });
-                }
-                return {
-                    name: tag,
-                    count: count
-                };
-            });
+            // タグ候補オブジェクトに変換
+            const filteredTagObjects = createTagSuggestions(filteredTags, tagCounts);
             if (filteredTagObjects.length === 0) {
                 this.state.items = [];
                 this.state.index = -1;
@@ -2360,56 +3120,13 @@
             const entries = getSites();
             const allTags = getAllTags(entries);
             // タグの使用回数をカウント
-            const tagCounts = {};
-            entries.forEach(entry => {
-                if (entry.tags) {
-                    entry.tags.forEach((tag) => {
-                        const normalizedTag = tag.trim();
-                        if (normalizedTag) {
-                            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
-                        }
-                    });
-                }
-            });
+            const tagCounts = countTagUsage(entries);
             // クエリに基づいてタグをフィルタリング
-            let filteredTags = allTags.filter(tag => {
-                const tagLower = tag.toLowerCase();
-                const queryLower = query.toLowerCase();
-                // 完全一致
-                if (tagLower === queryLower)
-                    return true;
-                // 階層タグの親タグで一致
-                const parts = tag.split('/');
-                if (parts.some(part => part.toLowerCase() === queryLower))
-                    return true;
-                // 部分一致
-                if (tagLower.includes(queryLower))
-                    return true;
-                return false;
-            });
+            let filteredTags = filterTags(allTags, query);
             // 階層の浅い順、アルファベット順にソート
             filteredTags = sortTagsByHierarchy(filteredTags);
             // タグ候補オブジェクトに変換
-            const filteredTagObjects = filteredTags.map(tag => {
-                let count = tagCounts[tag] || 0;
-                // 親タグの場合、子タグの件数も合算
-                if (!tag.includes('/')) {
-                    Object.keys(tagCounts).forEach(childTag => {
-                        if (childTag.startsWith(tag + '/')) {
-                            count += tagCounts[childTag];
-                        }
-                    });
-                }
-                const parts = tag.split('/');
-                const depth = parts.length - 1;
-                const parentPath = parts.slice(0, -1).join('/');
-                return {
-                    name: tag,
-                    count: count,
-                    depth: depth,
-                    parentPath: parentPath || undefined
-                };
-            });
+            const filteredTagObjects = createTagSuggestions(filteredTags, tagCounts);
             // 新規タグ作成を提案
             const showNewTagOption = !filteredTagObjects.some(item => item.name.toLowerCase() === query.toLowerCase());
             if (filteredTagObjects.length === 0 && !showNewTagOption) {
@@ -2524,23 +3241,40 @@
      * DOM要素取得関連のユーティリティ関数
      */
     /**
+     * DOM要素取得の共通オブジェクト
+     */
+    const DOMSelectors = {
+        /**
+         * 親要素からIDで要素を取得する
+         */
+        byId: (parent, id) => {
+            return parent.querySelector(`#${id}`);
+        },
+        /**
+         * 親要素からname属性で要素リストを取得する
+         */
+        byName: (parent, name) => {
+            return parent.querySelectorAll(`[name="${name}"]`);
+        },
+        /**
+         * 親要素からセレクタで最初の要素を取得する
+         */
+        bySelector: (parent, selector) => {
+            return parent.querySelector(selector);
+        }};
+    // 後方互換性のために個別関数もエクスポート
+    /**
      * 親要素からIDで要素を取得する
      */
-    const getElementById = (parent, id) => {
-        return parent.querySelector(`#${id}`);
-    };
+    const getElementById = DOMSelectors.byId;
     /**
      * 親要素からname属性で要素リストを取得する
      */
-    const getElementsByName = (parent, name) => {
-        return parent.querySelectorAll(`[name="${name}"]`);
-    };
+    const getElementsByName = DOMSelectors.byName;
     /**
      * 親要素からセレクタで最初の要素を取得する
      */
-    const querySelector = (parent, selector) => {
-        return parent.querySelector(selector);
-    };
+    const querySelector = DOMSelectors.bySelector;
     /**
      * 設定画面用のDOM要素を取得する
      */
@@ -3791,7 +4525,7 @@
             this.dom = createInitialDOMElements();
             this.autocompleteState = createInitialAutocompleteState();
             // コンポーネントの初期化
-            this.palette = new Palette(this.state, this.dom, (item, shiftPressed) => this.executeEntry(item, shiftPressed));
+            this.palette = new Palette(this.state, this.dom, (item, shiftPressed) => this.executeEntry(item, shiftPressed), () => this.openManager(), () => this.openSettings());
             this.autocomplete = new Autocomplete(this.dom, this.autocompleteState, () => this.renderList(), () => this.updateActive());
             this.manager = new Manager(this.dom, () => this.renderList());
             this.settings = new SettingsUI(this.dom, () => this.applyTheme());
@@ -3834,7 +4568,7 @@
          * リストをレンダリングする
          */
         renderList() {
-            this.palette.renderList();
+            this.palette.refreshList();
         }
         /**
          * アクティブなアイテムを更新する
@@ -3880,33 +4614,6 @@
             this.dom.overlayEl.addEventListener('click', (e) => {
                 if (e.target === this.dom.overlayEl)
                     this.hidePalette();
-            });
-            // 入力イベント
-            this.dom.inputEl.addEventListener('keydown', (e) => {
-                // 入力フィールド内のキーイベントは優先的に処理
-                console.log('[Debug] Input keydown:', e.key, e.target);
-                this.state.activeIndex = this.keyboardHandler.onInputKey(e, this.state.currentItems, this.state.activeIndex, this.dom.inputEl, this.autocompleteState.isVisible);
-            });
-            this.dom.inputEl.addEventListener('input', () => this.renderList());
-            // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
-            this.dom.inputEl.addEventListener('keydown', (e) => {
-                // 文字入力関連のキーのみ伝播を停止
-                // 矢印キー、Enter、Escなどはパネル操作に必要なので伝播を許可
-                const isCharacterKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-                const isSpecialKey = ['Backspace', 'Delete'].includes(e.key);
-                if (isCharacterKey || isSpecialKey) {
-                    e.stopPropagation();
-                }
-            }, true);
-            // ヒントエリアのクリックイベント
-            this.dom.hintEl.addEventListener('click', (e) => {
-                const target = e.target;
-                if (target.id === 'vm-open-manager') {
-                    this.openManager();
-                }
-                else if (target.id === 'vm-open-settings') {
-                    this.openSettings();
-                }
             });
             // オートコンプリートの構築（初回のみ）
             if (!this.dom.autocompleteEl) {

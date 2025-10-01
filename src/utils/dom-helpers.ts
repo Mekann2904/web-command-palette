@@ -3,46 +3,124 @@
  */
 
 /**
+ * DOM要素取得の共通オブジェクト
+ */
+export const DOMSelectors = {
+  /**
+   * 親要素からIDで要素を取得する
+   */
+  byId: (parent: Element | Document, id: string): HTMLElement | null => {
+    return parent.querySelector(`#${id}`);
+  },
+
+  /**
+   * 親要素からname属性で要素リストを取得する
+   */
+  byName: (parent: Element, name: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(`[name="${name}"]`);
+  },
+
+  /**
+   * 親要素からデータ属性で要素を取得する
+   */
+  byDataAttr: (parent: Element, attribute: string): HTMLElement | null => {
+    return parent.querySelector(`[${attribute}]`);
+  },
+
+  /**
+   * 親要素からデータ属性で要素リストを取得する
+   */
+  byDataAttrs: (parent: Element, attribute: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(`[${attribute}]`);
+  },
+
+  /**
+   * 親要素からクラス名で要素リストを取得する
+   */
+  byClass: (parent: Element, className: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(`.${className}`);
+  },
+
+  /**
+   * 親要素からクラス名で最初の要素を取得する
+   */
+  byClassFirst: (parent: Element, className: string): HTMLElement | null => {
+    return parent.querySelector(`.${className}`);
+  },
+
+  /**
+   * 親要素からタグ名で要素リストを取得する
+   */
+  byTag: (parent: Element, tagName: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(tagName);
+  },
+
+  /**
+   * 親要素からタグ名で最初の要素を取得する
+   */
+  byTagFirst: (parent: Element, tagName: string): HTMLElement | null => {
+    return parent.querySelector(tagName);
+  },
+
+  /**
+   * 親要素からセレクタで最初の要素を取得する
+   */
+  bySelector: (parent: Element | Document, selector: string): HTMLElement | null => {
+    return parent.querySelector(selector);
+  },
+
+  /**
+   * 親要素からセレクタで要素リストを取得する
+   */
+  bySelectorAll: (parent: Element | Document, selector: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(selector);
+  },
+
+  /**
+   * 親要素から属性と値で要素を取得する
+   */
+  byAttr: (parent: Element, attribute: string, value: string): HTMLElement | null => {
+    return parent.querySelector(`[${attribute}="${value}"]`);
+  },
+
+  /**
+   * 親要素から属性と値で要素リストを取得する
+   */
+  byAttrs: (parent: Element, attribute: string, value: string): NodeListOf<Element> => {
+    return parent.querySelectorAll(`[${attribute}="${value}"]`);
+  }
+};
+
+// 後方互換性のために個別関数もエクスポート
+/**
  * 親要素からIDで要素を取得する
  */
-export const getElementById = (parent: Element | Document, id: string): HTMLElement | null => {
-  return parent.querySelector(`#${id}`);
-};
+export const getElementById = DOMSelectors.byId;
 
 /**
  * 親要素からデータ属性で要素を取得する
  */
-export const getElementByDataAttribute = (parent: Element, attribute: string): HTMLElement | null => {
-  return parent.querySelector(`[${attribute}]`);
-};
+export const getElementByDataAttribute = DOMSelectors.byDataAttr;
 
 /**
  * 親要素からname属性で要素リストを取得する
  */
-export const getElementsByName = (parent: Element, name: string): NodeListOf<Element> => {
-  return parent.querySelectorAll(`[name="${name}"]`);
-};
+export const getElementsByName = DOMSelectors.byName;
 
 /**
  * 親要素からクラス名で要素リストを取得する
  */
-export const getElementsByClassName = (parent: Element, className: string): NodeListOf<Element> => {
-  return parent.querySelectorAll(`.${className}`);
-};
+export const getElementsByClassName = DOMSelectors.byClass;
 
 /**
  * 親要素からセレクタで最初の要素を取得する
  */
-export const querySelector = (parent: Element | Document, selector: string): HTMLElement | null => {
-  return parent.querySelector(selector);
-};
+export const querySelector = DOMSelectors.bySelector;
 
 /**
  * 親要素からセレクタで要素リストを取得する
  */
-export const querySelectorAll = (parent: Element | Document, selector: string): NodeListOf<Element> => {
-  return parent.querySelectorAll(selector);
-};
+export const querySelectorAll = DOMSelectors.bySelectorAll;
 
 /**
  * 設定画面用のDOM要素を取得する

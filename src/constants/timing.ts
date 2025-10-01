@@ -18,6 +18,9 @@ export const TIMING = {
   // トースト表示期間
   TOAST_DURATION: 3000,
   
+  // トースト非表示遅延
+  TOAST_HIDE_DELAY: 3000,
+  
   // URL破棄遅延
   URL_REVOKE_DELAY: 2000,
   
@@ -49,5 +52,40 @@ export const TIMING = {
   SLIDE_IN_DURATION: 200,
   
   // スケールイン時間
-  SCALE_IN_DURATION: 200
+  SCALE_IN_DURATION: 200,
+  
+  // 新しく追加する定数（リファクタリング計画に基づく）
+  
+  // オートコンプリート非表示遅延
+  AUTOCOMPLETE_HIDE_DELAY: 300,
+  
+  // フォーカストラップ遅延
+  FOCUS_TRAP_DELAY: 0,
+  
+  // オーバーレイ非表示遅延
+  OVERLAY_HIDE_DELAY: 200,
+  
+  // アニメーションフレーム遅延
+  ANIMATION_FRAME_DELAY: 16,
+  
+  // ダブルクリック遅延
+  DOUBLE_CLICK_DELAY: 300,
+  
+  // ホールド遅延
+  HOLD_DELAY: 500,
+  
+  // リサイズデバウンス
+  RESIZE_DEBOUNCE: 250,
+  
+  // スクロールデバウンス
+  SCROLL_DEBOUNCE: 100,
+  
+  // キー入力遅延
+  KEY_INPUT_DELAY: 50,
+  
+  // メニュー表示遅延
+  MENU_SHOW_DELAY: 100,
+  
+  // メニュー非表示遅延
+  MENU_HIDE_DELAY: 150
 } as const;

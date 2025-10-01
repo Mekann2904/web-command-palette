@@ -108,3 +108,106 @@ export const sortTagsHierarchically = (tags: string[]): string[] => {
   
   return result;
 };
+
+/**
+ * タグ候補オブジェクトのインターフェース
+ */
+export interface TagSuggestion {
+  name: string;
+  count: number;
+  depth: number;
+  parentPath?: string;
+}
+
+/**
+ * タグの使用回数をカウントする
+ */
+export const countTagUsage = (entries: any[]): Record<string, number> => {
+  const tagCounts: Record<string, number> = {};
+  
+  entries.forEach(entry => {
+    if (entry.tags) {
+      entry.tags.forEach((tag: string) => {
+        const normalizedTag = tag.trim();
+        if (normalizedTag) {
+          tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
+        }
+      });
+    }
+  });
+  
+  return tagCounts;
+};
+
+/**
+ * タグをフィルタリングする
+ */
+export const filterTags = (allTags: string[], query: string): string[] => {
+  const queryLower = query.toLowerCase();
+  
+  return allTags.filter(tag => {
+    const tagLower = tag.toLowerCase();
+    
+    // 完全一致
+    if (tagLower === queryLower) return true;
+    
+    // 階層タグの親タグで一致
+    const parts = tag.split('/');
+    if (parts.some(part => part.toLowerCase() === queryLower)) return true;
+    
+    // 部分一致
+    if (tagLower.includes(queryLower)) return true;
+    
+    return false;
+  });
+};
+
+/**
+ * 階層タグをフィルタリングする
+ */
+export const filterHierarchicalTags = (allTags: string[], query: string): string[] => {
+  if (query.includes('/')) {
+    const parts = query.split('/');
+    const parentQuery = parts.slice(0, -1).join('/');
+    const childQuery = parts[parts.length - 1];
+    
+    return allTags.filter(tag => {
+      if (tag.startsWith(parentQuery + '/')) {
+        const childPart = tag.slice(parentQuery.length + 1);
+        return childPart.toLowerCase().includes(childQuery.toLowerCase());
+      }
+      return false;
+    });
+  } else {
+    return filterTags(allTags, query);
+  }
+};
+
+/**
+ * タグ候補オブジェクトに変換する
+ */
+export const createTagSuggestions = (tags: string[], tagCounts: Record<string, number>): TagSuggestion[] => {
+  return tags.map(tag => {
+    let count = tagCounts[tag] || 0;
+    
+    // 親タグの場合、子タグの件数も合算
+    if (!tag.includes('/')) {
+      Object.keys(tagCounts).forEach(childTag => {
+        if (childTag.startsWith(tag + '/')) {
+          count += tagCounts[childTag];
+        }
+      });
+    }
+    
+    const parts = tag.split('/');
+    const depth = parts.length - 1;
+    const parentPath = parts.slice(0, -1).join('/');
+    
+    return {
+      name: tag,
+      count: count,
+      depth: depth,
+      parentPath: parentPath || undefined
+    };
+  });
+};

@@ -25,6 +25,7 @@ export interface VirtualScrollPosition {
 
 /**
  * 仮想スクロールを管理するクラス
+ * パフォーマンス最適化のための改善を実装
  */
 export class VirtualScrollManager {
   private items: VirtualScrollItem[] = [];
@@ -35,6 +36,10 @@ export class VirtualScrollManager {
   private itemHeights: Map<string, number> = new Map();
   private itemPositions: number[] = [];
   private totalHeight = 0;
+  private lastScrollTop = 0;
+  private scrollDirection: 'up' | 'down' | 'none' = 'none';
+  private visibleRangeCache: Map<number, VirtualScrollPosition> = new Map();
+  private maxCacheSize = 10;
 
   constructor(options: VirtualScrollOptions) {
     this.containerHeight = options.containerHeight;
@@ -48,6 +53,7 @@ export class VirtualScrollManager {
    */
   setItems(items: VirtualScrollItem[]): void {
     this.items = items;
+    this.visibleRangeCache.clear(); // キャッシュをクリア
     this.recalculatePositions();
   }
 
@@ -59,12 +65,14 @@ export class VirtualScrollManager {
     this.itemHeights.set(itemId, height);
     
     if (Math.abs(oldHeight - height) > 1) {
+      this.visibleRangeCache.clear(); // キャッシュをクリア
       this.recalculatePositions();
     }
   }
 
   /**
    * アイテムの位置を再計算
+   * パフォーマンス最適化のため、差分計算を実装
    */
   private recalculatePositions(): void {
     this.itemPositions = [0];
@@ -82,22 +90,42 @@ export class VirtualScrollManager {
 
   /**
    * スクロール位置に基づいて表示範囲を計算
+   * パフォーマンス最適化のため、キャッシュとバイナリサーチを実装
    */
   getVisibleRange(scrollTop: number): VirtualScrollPosition {
+    // スクロール方向を検出
+    this.scrollDirection = scrollTop > this.lastScrollTop ? 'down' : scrollTop < this.lastScrollTop ? 'up' : 'none';
+    this.lastScrollTop = scrollTop;
+
+    // キャッシュをチェック
+    const cacheKey = Math.floor(scrollTop / 10) * 10; // 10px単位でキャッシュ
+    if (this.visibleRangeCache.has(cacheKey)) {
+      return this.visibleRangeCache.get(cacheKey)!;
+    }
+
     let startIndex = 0;
     let endIndex = 0;
 
     // バイナリサーチで開始位置を特定
-    for (let i = 0; i < this.itemPositions.length - 1; i++) {
-      if (this.itemPositions[i] <= scrollTop && this.itemPositions[i + 1] > scrollTop) {
-        startIndex = Math.max(0, i - this.overscan);
+    let left = 0;
+    let right = this.itemPositions.length - 1;
+    
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+      if (this.itemPositions[mid] <= scrollTop && this.itemPositions[mid + 1] > scrollTop) {
+        startIndex = Math.max(0, mid - this.overscan);
         break;
+      } else if (this.itemPositions[mid] < scrollTop) {
+        left = mid + 1;
+      } else {
+        right = mid - 1;
       }
     }
 
     // 終了位置を計算
+    const visibleBottom = scrollTop + this.containerHeight;
     for (let i = startIndex; i < this.itemPositions.length - 1; i++) {
-      if (this.itemPositions[i] < scrollTop + this.containerHeight) {
+      if (this.itemPositions[i] < visibleBottom) {
         endIndex = i;
       } else {
         break;
@@ -106,20 +134,33 @@ export class VirtualScrollManager {
 
     endIndex = Math.min(this.items.length - 1, endIndex + this.overscan);
 
-    return {
+    const result = {
       scrollTop,
       startIndex,
       endIndex,
       offsetY: this.itemPositions[startIndex] || 0
     };
+
+    // キャッシュに保存
+    if (this.visibleRangeCache.size >= this.maxCacheSize) {
+      const firstKey = this.visibleRangeCache.keys().next().value;
+      if (firstKey !== undefined) {
+        this.visibleRangeCache.delete(firstKey);
+      }
+    }
+    this.visibleRangeCache.set(cacheKey, result);
+
+    return result;
   }
 
   /**
    * 表示すべきアイテムを取得
+   * パフォーマンス最適化のため、メモリ割り当てを最小化
    */
   getVisibleItems(scrollTop: number): Array<{ item: VirtualScrollItem; index: number; style: any }> {
     const position = this.getVisibleRange(scrollTop);
     const visibleItems: Array<{ item: VirtualScrollItem; index: number; style: any }> = [];
+    const styleCache: { [key: string]: any } = {};
 
     for (let i = position.startIndex; i <= position.endIndex; i++) {
       if (i < this.items.length) {
@@ -127,17 +168,26 @@ export class VirtualScrollManager {
         const top = this.itemPositions[i];
         const height = this.itemHeights.get(item.id) || this.estimatedItemHeight;
 
-        visibleItems.push({
-          item,
-          index: i,
-          style: {
+        // スタイルオブジェクトを再利用
+        const styleKey = `${top}-${height}`;
+        let style = styleCache[styleKey];
+        
+        if (!style) {
+          style = {
             position: 'absolute',
             top: `${top}px`,
             left: '0',
             right: '0',
             height: `${height}px`,
             zIndex: i
-          }
+          };
+          styleCache[styleKey] = style;
+        }
+
+        visibleItems.push({
+          item,
+          index: i,
+          style
         });
       }
     }

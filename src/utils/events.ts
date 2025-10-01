@@ -3,53 +3,164 @@
  */
 
 /**
+ * イベントリスナー設定の共通オブジェクト
+ */
+export const EventListeners = {
+  /**
+   * 要素にクリックイベントリスナーを追加する
+   */
+  addClick: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('click', handler);
+  },
+
+  /**
+   * 要素にキーダウンイベントリスナーを追加する
+   */
+  addKeydown: (element: Element | null, handler: (e: KeyboardEvent) => void): void => {
+    element?.addEventListener('keydown', handler as EventListener);
+  },
+
+  /**
+   * 要素に入力イベントリスナーを追加する
+   */
+  addInput: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('input', handler);
+  },
+
+  /**
+   * 要素にフォーカスイベントリスナーを追加する
+   */
+  addFocus: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('focus', handler);
+  },
+
+  /**
+   * 要素にブラーイベントリスナーを追加する
+   */
+  addBlur: (element: Element | null, handler: (e: FocusEvent) => void): void => {
+    element?.addEventListener('blur', handler as EventListener);
+  },
+
+  /**
+   * 要素にマウスエンターイベントリスナーを追加する
+   */
+  addMouseEnter: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('mouseenter', handler);
+  },
+
+  /**
+   * 要素にマウスダウンイベントリスナーを追加する
+   */
+  addMouseDown: (element: Element | null, handler: (e: MouseEvent) => void): void => {
+    element?.addEventListener('mousedown', handler as EventListener);
+  },
+
+  /**
+   * 要素にマウスアップイベントリスナーを追加する
+   */
+  addMouseUp: (element: Element | null, handler: (e: MouseEvent) => void): void => {
+    element?.addEventListener('mouseup', handler as EventListener);
+  },
+
+  /**
+   * 要素にマウスムーブイベントリスナーを追加する
+   */
+  addMouseMove: (element: Element | null, handler: (e: MouseEvent) => void): void => {
+    element?.addEventListener('mousemove', handler as EventListener);
+  },
+
+  /**
+   * 要素にマウスリーブイベントリスナーを追加する
+   */
+  addMouseLeave: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('mouseleave', handler);
+  },
+
+  /**
+   * 要素にコンテキストメニューリスナーを追加する
+   */
+  addContextMenu: (element: Element | null, handler: (e: MouseEvent) => void): void => {
+    element?.addEventListener('contextmenu', handler as EventListener);
+  },
+
+  /**
+   * 要素にホイールイベントリスナーを追加する
+   */
+  addWheel: (element: Element | null, handler: (e: WheelEvent) => void): void => {
+    element?.addEventListener('wheel', handler as EventListener);
+  },
+
+  /**
+   * 要素にサブミットイベントリスナーを追加する
+   */
+  addSubmit: (element: Element | null, handler: (e: SubmitEvent) => void): void => {
+    element?.addEventListener('submit', handler as EventListener);
+  },
+
+  /**
+   * 要素にチェンジイベントリスナーを追加する
+   */
+  addChange: (element: Element | null, handler: () => void): void => {
+    element?.addEventListener('change', handler);
+  },
+
+  /**
+   * 要素にタッチスタートイベントリスナーを追加する
+   */
+  addTouchStart: (element: Element | null, handler: (e: TouchEvent) => void): void => {
+    element?.addEventListener('touchstart', handler as EventListener);
+  },
+
+  /**
+   * 要素にタッチムーブイベントリスナーを追加する
+   */
+  addTouchMove: (element: Element | null, handler: (e: TouchEvent) => void): void => {
+    element?.addEventListener('touchmove', handler as EventListener);
+  },
+
+  /**
+   * 要素にタッチエンドイベントリスナーを追加する
+   */
+  addTouchEnd: (element: Element | null, handler: (e: TouchEvent) => void): void => {
+    element?.addEventListener('touchend', handler as EventListener);
+  }
+};
+
+// 後方互換性のために個別関数もエクスポート
+/**
  * 要素にクリックイベントリスナーを追加する
  */
-export const addClickListener = (element: Element | null, handler: () => void): void => {
-  element?.addEventListener('click', handler);
-};
+export const addClickListener = EventListeners.addClick;
 
 /**
  * 要素にキーダウンイベントリスナーを追加する
  */
-export const addKeydownListener = (element: Element | null, handler: (e: KeyboardEvent) => void): void => {
-  element?.addEventListener('keydown', handler as EventListener);
-};
+export const addKeydownListener = EventListeners.addKeydown;
 
 /**
  * 要素に入力イベントリスナーを追加する
  */
-export const addInputListener = (element: Element | null, handler: () => void): void => {
-  element?.addEventListener('input', handler);
-};
+export const addInputListener = EventListeners.addInput;
 
 /**
  * 要素にフォーカスイベントリスナーを追加する
  */
-export const addFocusListener = (element: Element | null, handler: () => void): void => {
-  element?.addEventListener('focus', handler);
-};
+export const addFocusListener = EventListeners.addFocus;
 
 /**
  * 要素にブラーイベントリスナーを追加する
  */
-export const addBlurListener = (element: Element | null, handler: (e: FocusEvent) => void): void => {
-  element?.addEventListener('blur', handler as EventListener);
-};
+export const addBlurListener = EventListeners.addBlur;
 
 /**
  * 要素にマウスエンターイベントリスナーを追加する
  */
-export const addMouseEnterListener = (element: Element | null, handler: () => void): void => {
-  element?.addEventListener('mouseenter', handler);
-};
+export const addMouseEnterListener = EventListeners.addMouseEnter;
 
 /**
  * 要素にマウスダウンイベントリスナーを追加する
  */
-export const addMouseDownListener = (element: Element | null, handler: (e: MouseEvent) => void): void => {
-  element?.addEventListener('mousedown', handler as EventListener);
-};
+export const addMouseDownListener = EventListeners.addMouseDown;
 
 /**
  * オートコンプリート用の特殊なイベント設定

@@ -36,7 +36,13 @@ class CommandPaletteApp {
     this.autocompleteState = createInitialAutocompleteState();
 
     // コンポーネントの初期化
-    this.palette = new Palette(this.state, this.dom, (item, shiftPressed) => this.executeEntry(item, shiftPressed));
+    this.palette = new Palette(
+      this.state,
+      this.dom,
+      (item, shiftPressed) => this.executeEntry(item, shiftPressed),
+      () => this.openManager(),
+      () => this.openSettings()
+    );
     this.autocomplete = new Autocomplete(
       this.dom, 
       this.autocompleteState,
@@ -89,7 +95,7 @@ class CommandPaletteApp {
    * リストをレンダリングする
    */
   renderList(): void {
-    this.palette.renderList();
+    this.palette.refreshList();
   }
 
   /**
@@ -140,43 +146,6 @@ class CommandPaletteApp {
     // オーバーレイクリックで閉じる
     this.dom.overlayEl.addEventListener('click', (e) => {
       if (e.target === this.dom.overlayEl) this.hidePalette();
-    });
-    
-    // 入力イベント
-    this.dom.inputEl.addEventListener('keydown', (e) => {
-      // 入力フィールド内のキーイベントは優先的に処理
-      console.log('[Debug] Input keydown:', e.key, e.target);
-      this.state.activeIndex = this.keyboardHandler.onInputKey(
-        e,
-        this.state.currentItems,
-        this.state.activeIndex,
-        this.dom.inputEl!,
-        this.autocompleteState.isVisible
-      );
-    });
-    
-    this.dom.inputEl.addEventListener('input', () => this.renderList());
-    
-    // 入力フィールドのキーイベントがグローバルイベントに妨害されないようにする
-    this.dom.inputEl.addEventListener('keydown', (e) => {
-      // 文字入力関連のキーのみ伝播を停止
-      // 矢印キー、Enter、Escなどはパネル操作に必要なので伝播を許可
-      const isCharacterKey = e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-      const isSpecialKey = ['Backspace', 'Delete'].includes(e.key);
-      
-      if (isCharacterKey || isSpecialKey) {
-        e.stopPropagation();
-      }
-    }, true);
-    
-    // ヒントエリアのクリックイベント
-    this.dom.hintEl.addEventListener('click', (e) => {
-      const target = e.target as HTMLElement;
-      if (target.id === 'vm-open-manager') {
-        this.openManager();
-      } else if (target.id === 'vm-open-settings') {
-        this.openSettings();
-      }
     });
 
     // オートコンプリートの構築（初回のみ）

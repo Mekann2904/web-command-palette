@@ -11,63 +11,256 @@ declare const GM_getValue: <T>(key: string, defaultValue?: T) => T;
 declare const GM_setValue: (key: string, value: any) => void;
 
 /**
+ * ストレージ操作の基底クラス
+ */
+abstract class StorageBase {
+  protected abstract getStorageKey(): string;
+  
+  protected get<T>(defaultValue?: T): T {
+    return GM_getValue(this.getStorageKey(), defaultValue as T);
+  }
+  
+  protected set(value: any): void {
+    GM_setValue(this.getStorageKey(), value);
+  }
+}
+
+/**
+ * サイトストレージクラス
+ */
+class SiteStorage extends StorageBase {
+  protected getStorageKey(): string {
+    return STORAGE_KEY;
+  }
+  
+  /**
+   * サイトを取得する
+   */
+  getSites(): SiteEntry[] {
+    const raw = this.get(defaultSites);
+    const normalized = [];
+    let mutated = false;
+    
+    for (const item of raw) {
+      const norm = normalizeSite(item);
+      if (!norm) continue;
+      if (item !== norm) mutated = true;
+      normalized.push(norm);
+    }
+    
+    if (!normalized.length) {
+      normalized.push(...defaultSites.map(normalizeSite).filter(Boolean) as SiteEntry[]);
+    }
+    
+    if (mutated) {
+      this.setSites(normalized, true);
+    }
+    
+    return normalized;
+  }
+
+  /**
+   * サイトを設定する
+   */
+  setSites(sites: SiteEntry[], skipNormalize = false): void {
+    const list = skipNormalize ? sites : sites.map(normalizeSite).filter(Boolean) as SiteEntry[];
+    this.set(list);
+  }
+  
+  /**
+   * サイトを追加する
+   */
+  addSite(site: Partial<SiteEntry>): SiteEntry {
+    const sites = this.getSites();
+    const newSite = normalizeSite({ ...site, id: site.id || generateId('site') });
+    if (newSite) {
+      sites.push(newSite);
+      this.setSites(sites, true);
+    }
+    return newSite as SiteEntry;
+  }
+  
+  /**
+   * サイトを更新する
+   */
+  updateSite(id: string, updates: Partial<SiteEntry>): boolean {
+    const sites = this.getSites();
+    const index = sites.findIndex(site => site.id === id);
+    
+    if (index === -1) return false;
+    
+    sites[index] = { ...sites[index], ...updates };
+    this.setSites(sites, true);
+    return true;
+  }
+  
+  /**
+   * サイトを削除する
+   */
+  deleteSite(id: string): boolean {
+    const sites = this.getSites();
+    const filteredSites = sites.filter(site => site.id !== id);
+    
+    if (filteredSites.length === sites.length) return false;
+    
+    this.setSites(filteredSites, true);
+    return true;
+  }
+}
+
+/**
+ * 設定ストレージクラス
+ */
+class SettingsStorage extends StorageBase {
+  protected getStorageKey(): string {
+    return SETTINGS_KEY;
+  }
+  
+  /**
+   * 設定を取得する
+   */
+  getSettings(): Settings {
+    return { ...defaultSettings, ...this.get({}) };
+  }
+
+  /**
+   * 設定を保存する
+   */
+  setSettings(settings: Partial<Settings>): void {
+    this.set({ ...this.getSettings(), ...settings });
+  }
+  
+  /**
+   * 設定をリセットする
+   */
+  resetSettings(): void {
+    this.set(defaultSettings);
+  }
+}
+
+/**
+ * キャッシュストレージクラス
+ */
+class CacheStorage extends StorageBase {
+  constructor(private key: string) {
+    super();
+  }
+  
+  protected getStorageKey(): string {
+    return this.key;
+  }
+  
+  /**
+   * キャッシュを取得する
+   */
+  getCache<T>(): Record<string, T> {
+    return this.get({});
+  }
+  
+  /**
+   * キャッシュを設定する
+   */
+  setCache<T>(cache: Record<string, T>): void {
+    this.set(cache);
+  }
+  
+  /**
+   * キャッシュエントリを設定する
+   */
+  setCacheEntry<T>(key: string, value: T): void {
+    const cache = this.getCache<T>();
+    cache[key] = value;
+    this.setCache(cache);
+  }
+  
+  /**
+   * キャッシュエントリを削除する
+   */
+  deleteCacheEntry(key: string): boolean {
+    const cache = this.getCache();
+    if (!(key in cache)) return false;
+    
+    delete cache[key];
+    this.setCache(cache);
+    return true;
+  }
+  
+  /**
+   * キャッシュをクリアする
+   */
+  clearCache(): void {
+    this.set({});
+  }
+}
+
+// ストレージインスタンスを作成
+const siteStorage = new SiteStorage();
+const settingsStorage = new SettingsStorage();
+const favCacheStorage = new CacheStorage(FAVCACHE_KEY);
+const usageStorage = new CacheStorage(USAGE_KEY);
+
+/**
  * ストレージを初期化する
  */
 export const initializeStorage = (): void => {
-  if (!GM_getValue(STORAGE_KEY)) {
-    GM_setValue(STORAGE_KEY, defaultSites);
-  }
-  if (!GM_getValue(SETTINGS_KEY)) {
-    GM_setValue(SETTINGS_KEY, defaultSettings);
-  }
+  siteStorage.getSites(); // 初期化時に正規化を実行
+  settingsStorage.getSettings(); // 初期化時にデフォルト設定を適用
 };
 
 /**
  * サイトを取得する
  */
 export const getSites = (): SiteEntry[] => {
-  const raw = GM_getValue(STORAGE_KEY, defaultSites);
-  const normalized = [];
-  let mutated = false;
-  
-  for (const item of raw) {
-    const norm = normalizeSite(item);
-    if (!norm) continue;
-    if (item !== norm) mutated = true;
-    normalized.push(norm);
-  }
-  
-  if (!normalized.length) {
-    normalized.push(...defaultSites.map(normalizeSite).filter(Boolean) as SiteEntry[]);
-  }
-  
-  if (mutated) {
-    setSites(normalized, true);
-  }
-  
-  return normalized;
+  return siteStorage.getSites();
 };
 
 /**
  * サイトを設定する
  */
 export const setSites = (sites: SiteEntry[], skipNormalize = false): void => {
-  const list = skipNormalize ? sites : sites.map(normalizeSite).filter(Boolean) as SiteEntry[];
-  GM_setValue(STORAGE_KEY, list);
+  siteStorage.setSites(sites, skipNormalize);
+};
+
+/**
+ * サイトを追加する
+ */
+export const addSite = (site: Partial<SiteEntry>): SiteEntry => {
+  return siteStorage.addSite(site);
+};
+
+/**
+ * サイトを更新する
+ */
+export const updateSite = (id: string, updates: Partial<SiteEntry>): boolean => {
+  return siteStorage.updateSite(id, updates);
+};
+
+/**
+ * サイトを削除する
+ */
+export const deleteSite = (id: string): boolean => {
+  return siteStorage.deleteSite(id);
 };
 
 /**
  * 設定を取得する
  */
 export const getSettings = (): Settings => {
-  return { ...defaultSettings, ...GM_getValue(SETTINGS_KEY, {}) };
+  return settingsStorage.getSettings();
 };
 
 /**
  * 設定を保存する
  */
 export const setSettings = (settings: Partial<Settings>): void => {
-  GM_setValue(SETTINGS_KEY, { ...getSettings(), ...settings });
+  settingsStorage.setSettings(settings);
+};
+
+/**
+ * 設定をリセットする
+ */
+export const resetSettings = (): void => {
+  settingsStorage.resetSettings();
 };
 
 /**
@@ -84,44 +277,42 @@ export const incrementUsage = (id: string): void => {
  * faviconキャッシュを取得する
  */
 export const getFavCache = (): Record<string, string> => {
-  return GM_getValue(FAVCACHE_KEY, {});
+  return favCacheStorage.getCache<string>();
 };
 
 /**
  * faviconキャッシュを設定する
  */
 export const setFavCache = (origin: string, href: string): void => {
-  const favCache = getFavCache();
-  favCache[origin] = href;
-  GM_setValue(FAVCACHE_KEY, favCache);
+  favCacheStorage.setCacheEntry(origin, href);
 };
 
 /**
  * 指定したoriginのfaviconキャッシュをクリアする
  */
 export const clearFavCacheOrigin = (origin: string): void => {
-  if (!origin) return;
-  const favCache = getFavCache();
-  if (favCache[origin]) {
-    delete favCache[origin];
-    GM_setValue(FAVCACHE_KEY, favCache);
-  }
+  favCacheStorage.deleteCacheEntry(origin);
+};
+
+/**
+ * faviconキャッシュをクリアする
+ */
+export const clearFavCache = (): void => {
+  favCacheStorage.clearCache();
 };
 
 /**
  * 使用回数キャッシュを取得する
  */
 export const getUsageCache = (): Record<string, number> => {
-  return GM_getValue(USAGE_KEY, {});
+  return usageStorage.getCache<number>();
 };
 
 /**
  * 使用回数を設定する
  */
 export const setUsage = (id: string, count: number): void => {
-  const usageCache = getUsageCache();
-  usageCache[id] = count;
-  GM_setValue(USAGE_KEY, usageCache);
+  usageStorage.setCacheEntry(id, count);
 };
 
 /**
@@ -141,8 +332,15 @@ export const pruneUsage = (validIds: Set<string>): void => {
   }
   
   if (changed) {
-    GM_setValue(USAGE_KEY, next);
+    usageStorage.setCache(next);
   }
+};
+
+/**
+ * 使用回数キャッシュをクリアする
+ */
+export const clearUsageCache = (): void => {
+  usageStorage.clearCache();
 };
 
 /**

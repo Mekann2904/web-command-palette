@@ -3,7 +3,7 @@ import { getAllTags, shouldShowTagSuggestions } from '@/utils/search';
 import { escapeHtml } from '@/utils/string';
 import { setupAutocompleteEvents, addClickListener, addMouseEnterListener, addMouseDownListener, addInputListener, addKeydownListener } from '@/utils/events';
 import { addInputSpace } from '@/utils/timing';
-import { sortTagsByHierarchy } from '@/utils/tag-sort';
+import { sortTagsByHierarchy, countTagUsage, filterHierarchicalTags, createTagSuggestions, TagSuggestion } from '@/utils/tag-sort';
 
 /**
  * オートコンプリートUIを管理するクラス
@@ -164,80 +164,17 @@ export class Autocomplete {
     const entries = this.getEntries();
     const allTags = getAllTags(entries);
     
-    const tagCounts: Record<string, number> = {};
-    entries.forEach(entry => {
-      if (entry.tags) {
-        entry.tags.forEach((tag: string) => {
-          // タグを正規化してカウント
-          const normalizedTag = tag.trim();
-          if (normalizedTag) {
-            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
-          }
-        });
-      }
-    });
+    // タグの使用回数をカウント
+    const tagCounts = countTagUsage(entries);
     
-    let filteredTags = [];
+    // タグをフィルタリング
+    let filteredTags = filterHierarchicalTags(allTags, query);
     
-    if (query.includes('/')) {
-      const parts = query.split('/');
-      const parentQuery = parts.slice(0, -1).join('/');
-      const childQuery = parts[parts.length - 1];
-      
-      filteredTags = allTags.filter(tag => {
-        if (tag.startsWith(parentQuery + '/')) {
-          const childPart = tag.slice(parentQuery.length + 1);
-          return childPart.toLowerCase().includes(childQuery.toLowerCase());
-        }
-        return false;
-      });
-    } else {
-      filteredTags = allTags.filter(tag => {
-        const tagLower = tag.toLowerCase();
-        const queryLower = query.toLowerCase();
-        
-        
-        // 完全一致
-        if (tagLower === queryLower) {
-          return true;
-        }
-        
-        // 階層タグの親タグで一致（例: "ai/deepseek" は "ai" で一致）
-        const parts = tag.split('/');
-        if (parts.some(part => part.toLowerCase() === queryLower)) {
-          return true;
-        }
-        
-        // 部分一致（ただし階層タグの一部として既に一致している場合は重複を避ける）
-        if (tagLower.includes(queryLower)) {
-          return true;
-        }
-        
-        return false;
-      });
-    }
-    
+    // 階層の浅い順、アルファベット順にソート
     filteredTags = sortTagsByHierarchy(filteredTags);
     
-    const filteredTagObjects = filteredTags.map(tag => {
-      // 階層タグの場合、親タグと子タグの件数を合算
-      let count = tagCounts[tag] || 0;
-      
-      // 親タグの場合、子タグの件数も合算
-      if (!tag.includes('/')) {
-        // 親タグの場合、その親タグで始まるすべての子タグの件数を合算
-        Object.keys(tagCounts).forEach(childTag => {
-          if (childTag.startsWith(tag + '/')) {
-            count += tagCounts[childTag];
-          }
-        });
-      }
-      
-      return {
-        name: tag,
-        count: count
-      };
-    });
+    // タグ候補オブジェクトに変換
+    const filteredTagObjects = createTagSuggestions(filteredTags, tagCounts);
     
     if (filteredTagObjects.length === 0) {
       this.state.items = [];

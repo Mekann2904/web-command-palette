@@ -4,7 +4,7 @@ import { getAllTags } from '@/utils/search';
 import { escapeHtml } from '@/utils/string';
 import { addClickListener, addMouseEnterListener, addMouseDownListener, addInputListener, addKeydownListener, addBlurListener } from '@/utils/events';
 import { setBlurCheckTimeout, addInputSpace } from '@/utils/timing';
-import { sortTagsByHierarchy } from '@/utils/tag-sort';
+import { sortTagsByHierarchy, countTagUsage, filterTags, createTagSuggestions, TagSuggestion } from '@/utils/tag-sort';
 
 /**
  * マネージャーオートコンプリートの状態インターフェース
@@ -13,16 +13,6 @@ interface ManagerAutocompleteState {
   items: TagSuggestion[];
   index: number;
   isVisible: boolean;
-}
-
-/**
- * タグ候補のインターフェース
- */
-interface TagSuggestion {
-  name: string;
-  count: number;
-  depth: number;
-  parentPath?: string;
 }
 
 /**
@@ -247,63 +237,16 @@ export class ManagerAutocomplete {
     const allTags = getAllTags(entries);
     
     // タグの使用回数をカウント
-    const tagCounts: Record<string, number> = {};
-    entries.forEach(entry => {
-      if (entry.tags) {
-        entry.tags.forEach((tag: string) => {
-          const normalizedTag = tag.trim();
-          if (normalizedTag) {
-            tagCounts[normalizedTag] = (tagCounts[normalizedTag] || 0) + 1;
-          }
-        });
-      }
-    });
+    const tagCounts = countTagUsage(entries);
     
     // クエリに基づいてタグをフィルタリング
-    let filteredTags = allTags.filter(tag => {
-      const tagLower = tag.toLowerCase();
-      const queryLower = query.toLowerCase();
-      
-      // 完全一致
-      if (tagLower === queryLower) return true;
-      
-      // 階層タグの親タグで一致
-      const parts = tag.split('/');
-      if (parts.some(part => part.toLowerCase() === queryLower)) return true;
-      
-      // 部分一致
-      if (tagLower.includes(queryLower)) return true;
-      
-      return false;
-    });
+    let filteredTags = filterTags(allTags, query);
     
     // 階層の浅い順、アルファベット順にソート
     filteredTags = sortTagsByHierarchy(filteredTags);
     
     // タグ候補オブジェクトに変換
-    const filteredTagObjects = filteredTags.map(tag => {
-      let count = tagCounts[tag] || 0;
-      
-      // 親タグの場合、子タグの件数も合算
-      if (!tag.includes('/')) {
-        Object.keys(tagCounts).forEach(childTag => {
-          if (childTag.startsWith(tag + '/')) {
-            count += tagCounts[childTag];
-          }
-        });
-      }
-      
-      const parts = tag.split('/');
-      const depth = parts.length - 1;
-      const parentPath = parts.slice(0, -1).join('/');
-      
-      return {
-        name: tag,
-        count: count,
-        depth: depth,
-        parentPath: parentPath || undefined
-      };
-    });
+    const filteredTagObjects = createTagSuggestions(filteredTags, tagCounts);
     
     // 新規タグ作成を提案
     const showNewTagOption = !filteredTagObjects.some(item => item.name.toLowerCase() === query.toLowerCase());
